@@ -37,25 +37,32 @@ func RunInteractive(
 	autoStart bool,
 ) (bool, error) {
 	topic := ""
+	dictsDone := cr.DictionaryCompleted(b.SeenSources)
+	dictsTotal := cr.DictionaryCount()
 	grammarDone := cr.GrammarCompleted(b.SeenSources)
 	grammarTotal := cr.GrammarCount()
 
 	if !autoStart {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, theme.BoldGreen("  === MODE 1: EASY AI TRAINING MODE ==="))
-		fmt.Fprintf(out, "  %s Stage: %s (Level %d • Grammar %d/%d • %d learned words • %d synapses)\n",
+		fmt.Fprintf(out, "  %s Stage: %s (Lv.%d • Dicts %d/%d • Grammar %d/%d • %d words • %d synapses)\n",
 			theme.Green("•"),
-			theme.BoldCyan(IntelligenceStage(b.Level, grammarDone, grammarTotal)),
-			b.Level, grammarDone, grammarTotal, b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
-		if grammarDone < grammarTotal {
-			fmt.Fprintf(out, "  %s Curriculum: %s learns core words & grammar FIRST (%d/%d), then real articles!\n",
-				theme.Green("•"), b.Name, grammarDone, grammarTotal)
+			theme.BoldCyan(IntelligenceStage(b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal)),
+			b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal,
+			b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
+
+		if dictsDone < dictsTotal {
+			fmt.Fprintf(out, "  %s Curriculum: %s trains on Dictionaries FIRST (%d/%d), then Grammar (%d/%d), then Real Articles!\n",
+				theme.Green("•"), b.Name, dictsDone, dictsTotal, grammarDone, grammarTotal)
+		} else if grammarDone < grammarTotal {
+			fmt.Fprintf(out, "  %s Curriculum: Dictionaries mastered! Finishing Grammar (%d/%d) before Real Articles!\n",
+				theme.Green("•"), grammarDone, grammarTotal)
 		} else {
 			fmt.Fprintf(out, "  %s Sources: Live Wikipedia articles + Local notes (%s) + Built-in Encyclopedia\n",
 				theme.Green("•"), theme.Dim(cr.NotesDir()))
 		}
 
-		ans, err := ui.Prompt(reader, out, "  Focus topic (press Enter for Words/Grammar → Real Articles Auto-Study): ")
+		ans, err := ui.Prompt(reader, out, "  Focus topic (press Enter for Dictionaries → Grammar → Real Articles Auto-Study): ")
 		if err != nil && err != io.EOF {
 			return false, err
 		}
@@ -98,7 +105,7 @@ func RunInteractive(
 	return false, err
 }
 
-// RunLoop executes the curriculum + real article-reading and neural training loop.
+// RunLoop executes the Dictionaries -> Grammar -> Real Articles neural training loop.
 func RunLoop(
 	out io.Writer,
 	theme ui.Theme,
@@ -140,8 +147,8 @@ func RunLoop(
 
 		wasFreshStart := b.ArticlesRead == 0 && !spokenFirst
 		epochs := 2
-		if strings.HasPrefix(art.Source, "curriculum:") {
-			epochs = 3 // Extra pass on core grammar & vocabulary lessons
+		if strings.HasPrefix(art.Source, "dictionary:") || strings.HasPrefix(art.Source, "curriculum:") {
+			epochs = 3 // Thoroughly reinforce dictionary word meanings & grammar lessons
 		}
 		rep := b.TrainOnArticle(art, epochs)
 		sessionArticles++
@@ -218,10 +225,12 @@ func printMatrixThought(out io.Writer, theme ui.Theme, name string, level int, m
 
 func sourceBadge(theme ui.Theme, src string) string {
 	switch {
+	case strings.HasPrefix(src, "dictionary:"):
+		return theme.BoldCyan("[DICT]   ")
 	case strings.HasPrefix(src, "curriculum:"):
 		return theme.Yellow("[GRAMMAR]")
 	case strings.HasPrefix(src, "http://"), strings.HasPrefix(src, "https://"), strings.HasPrefix(src, "wikipedia:"):
-		return theme.BoldCyan("[WEB]    ")
+		return theme.BoldGreen("[WEB]    ")
 	case strings.HasPrefix(src, "local:"):
 		return theme.Magenta("[NOTES]  ")
 	default:

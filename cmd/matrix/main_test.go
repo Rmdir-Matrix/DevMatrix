@@ -44,8 +44,11 @@ func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
 		t.Fatalf("RunLoop error: %v", err)
 	}
 
+	if b.DictionariesDone != cr.DictionaryCount() {
+		t.Fatalf("expected all %d dictionary volumes completed first, got %d", cr.DictionaryCount(), b.DictionariesDone)
+	}
 	if b.GrammarDone != cr.GrammarCount() {
-		t.Fatalf("expected all %d grammar lessons completed first, got %d", cr.GrammarCount(), b.GrammarDone)
+		t.Fatalf("expected all %d grammar lessons completed second, got %d", cr.GrammarCount(), b.GrammarDone)
 	}
 	if b.Level < 100 {
 		t.Fatalf("expected Matrix to reach Level >= 100, got Level %d", b.Level)

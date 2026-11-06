@@ -24,6 +24,8 @@ func RunInteractive(
 	cr *corpus.Reader,
 	dataDir string,
 ) (bool, error) {
+	dictsDone := cr.DictionaryCompleted(b.SeenSources)
+	dictsTotal := cr.DictionaryCount()
 	grammarDone := cr.GrammarCompleted(b.SeenSources)
 	grammarTotal := cr.GrammarCount()
 
@@ -31,9 +33,9 @@ func RunInteractive(
 	fmt.Fprintln(out, theme.BoldCyan("  === MODE 2: STUDY BUDDY CHAT MODE (PURE MODEL OUTPUT) ==="))
 	fmt.Fprintf(out, "  %s Connected to %s (Level %d • %s • %d words learned • %d synapses)\n",
 		theme.Cyan("•"), theme.BoldGreen(b.Name), b.Level,
-		trainer.IntelligenceStage(b.Level, grammarDone, grammarTotal),
+		trainer.IntelligenceStage(b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal),
 		b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
-	fmt.Fprintln(out, "  "+theme.Dim("Tools: /quiz [topic] • /study <topic> • remember: <fact> • /summary • /brain • /train • /back"))
+	fmt.Fprintln(out, "  "+theme.Dim("Tools: /define <word> • /study <topic> • /quiz [topic] • remember: <fact> • /summary • /brain • /train • /back"))
 	fmt.Fprintln(out)
 
 	// Initial prompt uses the model itself (or reports honestly if untrained)
@@ -76,6 +78,11 @@ func RunInteractive(
 		}
 		if strings.HasPrefix(lower, "/summary") || strings.HasPrefix(lower, "/topics") {
 			fmt.Fprintf(out, "  %s %s\n", theme.Cyan("[Study Summary]"), BuildSummaryReport(b))
+			continue
+		}
+		if strings.HasPrefix(lower, "/define") {
+			word := strings.TrimSpace(userMsg[len("/define"):])
+			runQuickDictionaryStudy(out, theme, b, cr, dataDir, word)
 			continue
 		}
 		if strings.HasPrefix(lower, "/study") {
@@ -152,6 +159,29 @@ func BuildSummaryReport(b *brain.Brain) string {
 	return fmt.Sprintf("Studied %d items (%d words in vocabulary, %d active synapses). Domains: %s. Recent: %s.",
 		b.ArticlesRead, b.Net.LearnedWordCount(), b.Net.ActiveSynapses(),
 		strings.Join(topics, ", "), strings.Join(recent, " • "))
+}
+
+func runQuickDictionaryStudy(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader, dataDir, word string) {
+	if word == "" {
+		fmt.Fprintln(out, "  "+theme.Yellow("Usage: /define <word>  (for example: /define hypothesis)"))
+		return
+	}
+	art, err := cr.FetchDictionaryEntry(context.Background(), word)
+	if err != nil {
+		printUnknownReply(out, theme, b.Name, b.Level,
+			fmt.Sprintf("Could not find a dictionary entry for %q (%v).", word, err))
+		return
+	}
+	rep := b.TrainOnArticle(art, 3)
+	_ = b.Save(dataDir)
+	fmt.Fprintf(out, "     %s Trained on %q (%d words vocab • loss %.3f • Lv.%d)\n",
+		theme.Green("✓"), rep.ArticleTitle, rep.VocabSize, rep.SmoothedLoss, rep.NewLevel)
+
+	if gen, ok, reason := b.GenerateModelReply("define " + word); ok {
+		printBuddyReply(out, theme, b.Name, b.Level, gen)
+	} else {
+		printUnknownReply(out, theme, b.Name, b.Level, reason)
+	}
 }
 
 func runQuickChatStudy(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader, dataDir, topic string) {

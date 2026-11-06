@@ -4,14 +4,15 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/brain"
 )
 
-// IntelligenceStage returns a short UI badge describing Matrix's training phase.
-func IntelligenceStage(level int, grammarDone int, grammarTotal int) string {
+// IntelligenceStage returns a short UI badge describing Matrix's current training phase.
+func IntelligenceStage(level int, dictsDone, dictsTotal, grammarDone, grammarTotal int) string {
+	if dictsTotal > 0 && dictsDone < dictsTotal {
+		return "Studying Dictionaries"
+	}
 	if grammarTotal > 0 && grammarDone < grammarTotal {
-		return "Learning Words & Grammar"
+		return "Learning Grammar"
 	}
 	switch {
-	case level < 10:
-		return "Early Reader"
 	case level < 25:
 		return "Curious Learner"
 	case level < 50:

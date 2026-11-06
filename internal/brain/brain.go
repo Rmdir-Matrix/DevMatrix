@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	maxNGramKeys        = 28000
-	maxFollowersPerKey  = 18
-	maxPromptCueKeys    = 6000
-	maxStartersPerCue   = 14
+	maxNGramKeys        = 50000
+	maxFollowersPerKey  = 64
+	maxPromptCueKeys    = 12000
+	maxStartersPerCue   = 24
 )
 
 // Passage stores a learned study excerpt indexed by keywords and source metadata.
@@ -61,10 +61,11 @@ type Brain struct {
 	Name           string                    `json:"name"`
 	CreatedAt      string                    `json:"created_at"`
 	UpdatedAt      string                    `json:"updated_at"`
-	Level          int                       `json:"level"`
-	XP             int64                     `json:"xp"`
-	ArticlesRead   int                       `json:"articles_read"`
-	GrammarDone    int                       `json:"grammar_done"`
+	Level            int                       `json:"level"`
+	XP               int64                     `json:"xp"`
+	ArticlesRead     int                       `json:"articles_read"`
+	DictionariesDone int                       `json:"dictionaries_done"`
+	GrammarDone      int                       `json:"grammar_done"`
 	TokensTrained  int64                     `json:"tokens_trained"`
 	TrainingSteps  int64                     `json:"training_steps"`
 	InitialLoss    float64                   `json:"initial_loss"`
@@ -225,10 +226,10 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 		}
 	}
 
-	// Once grammar foundation is learned, reading real articles also trains new article-grounded thoughts
-	// using words the model has already learned!
+	// Once dictionary & grammar foundations are learned, reading real articles also trains new article-grounded thoughts
 	sampleKW := ExtractKeywords(art.Title+" "+art.Content, 6)
-	if !strings.HasPrefix(art.Source, "curriculum:") && len(sampleKW) >= 2 && b.Net.KnowsToken("learning") {
+	isFoundational := strings.HasPrefix(art.Source, "dictionary:") || strings.HasPrefix(art.Source, "curriculum:")
+	if !isFoundational && len(sampleKW) >= 2 && b.Net.KnowsToken("learning") {
 		var dynThought []string
 		if b.Level >= 75 && b.Net.KnowsToken("connections") {
 			dynThought = Tokenize(fmt.Sprintf(
@@ -297,7 +298,9 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 	xpGain := int64(48 + minInt(tokensRead/3, 185))
 	if !b.SeenSources[art.Source] && art.Source != "" {
 		xpGain += 35
-		if strings.HasPrefix(art.Source, "curriculum:") {
+		if strings.HasPrefix(art.Source, "dictionary:") {
+			b.DictionariesDone++
+		} else if strings.HasPrefix(art.Source, "curriculum:") {
 			b.GrammarDone++
 		}
 	}
@@ -510,7 +513,11 @@ func (b *Brain) searchPassagesLocked(query string, topK int) []Passage {
 		}
 		titleLower := strings.ToLower(p.Title)
 		topicLower := strings.ToLower(p.Topic)
+		textLower := strings.ToLower(p.Text)
 		for qk := range qSet {
+			if strings.HasPrefix(textLower, qk+", ") || strings.HasPrefix(textLower, qk+" ") {
+				overlap += 3.5
+			}
 			if strings.Contains(titleLower, qk) {
 				overlap += 1.8
 			}

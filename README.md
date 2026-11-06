@@ -34,11 +34,12 @@ On first launch, Matrix probes your system's **Total RAM**, **Available Free RAM
 
 Your chosen budget is enforced in the Go runtime (`debug.SetMemoryLimit` + `GOMAXPROCS`) and scales neural network dimensions (`Featherweight` → `Lite` → `Balanced` → `Performance` → `Ultra`).
 
-### 2. Mode 1 — Words & Grammar First Curriculum + Real Article Training
+### 2. Mode 1 — Dictionaries First → Grammar → Real Articles Training
 Press **`Enter`** (or **`1`**) from the Main Menu to turn Matrix ON:
-- **Phase 1 — Foundational Words & Grammar (`10 sequential lessons`)**: Before reading complex encyclopedias, a fresh Matrix learns core English words, greetings, pronouns, verbs, tenses, adjectives, prepositions, question words, and conjunctions.
-- **Phase 2 — Real Articles**: Once its grammar foundation is complete, Matrix reads live web articles from **Wikipedia's API**, personal notes dropped into `./matrix_data/study_notes/` (`.txt` / `.md`), and the built-in 23-article study encyclopedia.
-- **100% Model-Decoded Training Thoughts**: Every periodic message spoken during training (`"Matrix is learn now!"` → `"I'm learning stuff..."` → `"I am learning which makes more neuron connections in my brain."` and article-specific reflections) is decoded word-by-word directly from the neural model.
+- **Phase 1 — Core English Dictionaries (`12 sequential volumes`, `[DICT]`)**: A brand-new Matrix starts with **0 words** and trains on dictionaries **first** — learning headwords, parts of speech (`noun`, `verb`, `adjective`, `adverb`, `pronoun`, `preposition`, `conjunction`), word definitions, and usage examples.
+- **Phase 2 — Foundational Grammar (`10 sequential lessons`, `[GRAMMAR]`)**: Next, Matrix trains on sentence structure, tenses, questions (`what`, `why`, `how`), connectors (`because`, `which`), and conversational turn-taking.
+- **Phase 3 — Real Articles (`[NOTES]`, `[WEB]`, `[ARTICLE]`)**: Finally, Matrix moves on to personal notes in `./matrix_data/study_notes/`, live web articles from **Wikipedia's API**, and the built-in 23-article study encyclopedia.
+- **100% Model-Decoded Training Thoughts**: Every periodic message spoken during training (`"Matrix is learn now!"` → `"I'm learning stuff..."` → `"I am learning which makes more neuron connections in my brain."`) is decoded word-by-word directly from the neural model.
 - Type `chat` + `Enter` anytime during training to jump straight into Chat Mode, or press `Enter` to pause cleanly.
 
 ### 3. Mode 2 — Pure Model-Driven Study Buddy Chat Mode
@@ -46,6 +47,7 @@ Choose **`[2] Chat Mode`** to talk and study with your Matrix:
 - **Zero built-in fixed answers**: Every reply (including `"hello"` and `"how are you"`) is decoded autoregressively word-by-word from Matrix's trained neural language model and learned transition distributions.
 - **Honest Unknown Detection**: If Matrix hasn't trained yet or you ask about a word/concept it has never read about, it never fakes a canned answer — it tells you honestly what it doesn't know yet.
 - Built-in study tools:
+  - `/define <word>` — look up & train on a live/embedded dictionary definition for `<word>`
   - `remember: <fact>` — train Matrix's neural weights directly on a new sentence
   - `/study <topic>` — have Matrix fetch & train on articles about `<topic>` immediately
   - `/quiz [topic]` — active-recall fill-in-the-blank quiz generated from studied articles

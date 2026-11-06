@@ -89,11 +89,11 @@ func (b *Brain) GenerateModelReply(userInput string) (reply string, known bool, 
 		}
 	}
 
-	// Gather relevant learned passages only when query asks about domain topic words
+	// Gather relevant learned passages only when query asks about domain/dictionary target words
 	topicWords := ExtractTopicWords(wordToks)
 	var hits []Passage
 	if len(topicWords) > 0 {
-		hits = b.searchPassagesLocked(userInput, 2)
+		hits = b.searchPassagesLocked(strings.Join(topicWords, " "), 2)
 		if len(hits) == 0 {
 			hasCue := false
 			for _, tw := range topicWords {
@@ -302,7 +302,7 @@ func (b *Brain) decodeSequenceLocked(
 		bonus := float32(0)
 		for _, pt := range sc.tokens {
 			if boostTokens[pt] {
-				bonus += 0.9
+				bonus += 2.2
 			}
 		}
 		sScores[i] = sNeural[i] + float32(1.45*math.Log(sc.weight+1.0)) + bonus
@@ -378,7 +378,7 @@ func (b *Brain) decodeSequenceLocked(
 		for i, tok := range cTokens {
 			score := nLogits[i] + float32(1.50*math.Log(candWeights[tok]+1.0))
 			if boostTokens[tok] {
-				score += 0.85
+				score += 3.0
 			}
 			if pastSoftLimit && (tok == eosToken || tok == "." || tok == "!" || tok == "?") {
 				score += 4.5

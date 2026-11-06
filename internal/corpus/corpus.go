@@ -15,11 +15,14 @@ import (
 	"time"
 )
 
-//go:embed seed_articles.json
-var embeddedSeedJSON []byte
+//go:embed dictionary_entries.json
+var embeddedDictionaryJSON []byte
 
 //go:embed grammar_curriculum.json
 var embeddedGrammarJSON []byte
+
+//go:embed seed_articles.json
+var embeddedSeedJSON []byte
 
 const (
 	maxHTTPBytes       = 256 * 1024
@@ -28,28 +31,36 @@ const (
 	userAgentHeader    = "MatrixStudyBuddy/1.0 (CLI Educational AI Study Companion)"
 )
 
-// Article represents a real training document read by Matrix.
+// Article represents a dictionary volume, grammar lesson, or real training article read by Matrix.
 type Article struct {
 	Title   string `json:"title"`
 	Topic   string `json:"topic"`
-	Source  string `json:"source"` // e.g. "wikipedia:...", "local:...", "embedded:..."
+	Source  string `json:"source"` // e.g. "dictionary:...", "curriculum:...", "wikipedia:...", "local:...", "embedded:..."
 	Content string `json:"content"`
 }
 
-// Reader supplies real training articles, starting with sequential Foundational Words & Grammar
-// lessons first, followed by local study notes, live web encyclopedias, and the built-in encyclopedia.
+// Reader supplies real training data in natural order:
+//  1. Core English Dictionaries FIRST (word meanings & parts of speech)
+//  2. Foundational Grammar & Sentence Structure SECOND
+//  3. Local Study Notes, Live Web Articles & Built-in Encyclopedia THIRD
 type Reader struct {
-	notesDir         string
-	httpClient       *http.Client
-	grammarLessons   []Article
-	seedArticles     []Article
-	rng              *rand.Rand
-	offlineUntil     time.Time
-	DisableLiveFetch bool
+	notesDir          string
+	httpClient        *http.Client
+	dictionaryVolumes []Article
+	grammarLessons    []Article
+	seedArticles      []Article
+	rng               *rand.Rand
+	offlineUntil      time.Time
+	DisableLiveFetch  bool
 }
 
 // NewReader creates an Article Reader rooted at dataDir/study_notes.
 func NewReader(dataDir string) (*Reader, error) {
+	var dicts []Article
+	if err := json.Unmarshal(embeddedDictionaryJSON, &dicts); err != nil {
+		return nil, fmt.Errorf("load embedded dictionary corpus: %w", err)
+	}
+
 	var grammar []Article
 	if err := json.Unmarshal(embeddedGrammarJSON, &grammar); err != nil {
 		return nil, fmt.Errorf("load embedded grammar curriculum: %w", err)
@@ -72,9 +83,10 @@ func NewReader(dataDir string) (*Reader, error) {
 		httpClient: &http.Client{
 			Timeout: httpRequestTimeout,
 		},
-		grammarLessons: grammar,
-		seedArticles:   seeds,
-		rng:            rand.New(rand.NewSource(time.Now().UnixNano())),
+		dictionaryVolumes: dicts,
+		grammarLessons:    grammar,
+		seedArticles:      seeds,
+		rng:               rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -83,7 +95,23 @@ func (r *Reader) NotesDir() string {
 	return r.notesDir
 }
 
-// GrammarCount returns how many sequential foundational words & grammar lessons exist.
+// DictionaryCount returns how many sequential dictionary volumes exist in Phase 1.
+func (r *Reader) DictionaryCount() int {
+	return len(r.dictionaryVolumes)
+}
+
+// DictionaryCompleted counts how many dictionary volumes Matrix has trained on so far.
+func (r *Reader) DictionaryCompleted(seen map[string]bool) int {
+	done := 0
+	for _, d := range r.dictionaryVolumes {
+		if seen[d.Source] {
+			done++
+		}
+	}
+	return done
+}
+
+// GrammarCount returns how many sequential foundational grammar lessons exist in Phase 2.
 func (r *Reader) GrammarCount() int {
 	return len(r.grammarLessons)
 }
@@ -104,16 +132,24 @@ func (r *Reader) SeedCount() int {
 	return len(r.seedArticles)
 }
 
-// NextArticle fetches the next training text:
-//  0. Sequential Foundational Words & Grammar lessons first (unless user explicitly requested a custom topic)
-//  1. Unread local study notes (.txt / .md)
-//  2. Live web Wikipedia articles (with automatic offline cooldown fallback)
-//  3. Built-in real study encyclopedia
+// NextArticle fetches the next training item in strict curriculum order:
+//  1. Sequential Dictionary Volumes FIRST (word definitions & parts of speech)
+//  2. Sequential Grammar & Sentence Structure Lessons SECOND
+//  3. Unread Local Study Notes (.txt / .md)
+//  4. Live Web Wikipedia Articles (with automatic offline cooldown fallback)
+//  5. Built-in Real Study Encyclopedia
 func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSources map[string]bool) (Article, error) {
 	topicFilter = strings.TrimSpace(topicFilter)
 
-	// 0. Always master Foundational Words & Grammar lessons in strict order first during general training!
 	if topicFilter == "" {
+		// Phase 1: Train on Dictionaries FIRST!
+		for _, dictVol := range r.dictionaryVolumes {
+			if !seenSources[dictVol.Source] {
+				return dictVol, nil
+			}
+		}
+
+		// Phase 2: Train on Grammar & Sentence Structure SECOND!
 		for _, lesson := range r.grammarLessons {
 			if !seenSources[lesson.Source] {
 				return lesson, nil
@@ -121,32 +157,41 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 		}
 	}
 
-	// 1. Check unread local study notes (.txt / .md) first so user notes get top priority
+	// Phase 3A: Check unread local study notes (.txt / .md)
 	if localArt, ok := r.nextUnreadLocalNote(topicFilter, seenSources); ok {
 		return localArt, nil
 	}
 
-	// 2. Try live Wikipedia article if online and not in temporary offline cooldown
+	// Phase 3B: Try live Wikipedia article if online and not in temporary offline cooldown
 	if !r.DisableLiveFetch && time.Now().After(r.offlineUntil) {
 		liveArt, err := r.fetchWikipediaArticle(ctx, topicFilter, seenSources)
 		if err == nil && len(strings.Fields(liveArt.Content)) >= 35 {
 			return liveArt, nil
 		}
 		if err != nil {
-			// Avoid stalling every step when offline or behind a restricted firewall;
-			// retry live web fetch automatically after 45 seconds.
 			r.offlineUntil = time.Now().Add(45 * time.Second)
 		}
 	}
 
-	// 3. Select from embedded real study encyclopedia (matching topic first if requested)
+	// Phase 3C: Select from embedded study encyclopedia (or matching dictionary volume if topic="dictionary")
+	qLower := strings.ToLower(topicFilter)
+	if qLower == "dictionary" || qLower == "words" || qLower == "vocabulary" {
+		for _, d := range r.dictionaryVolumes {
+			if !seenSources[d.Source] {
+				return d, nil
+			}
+		}
+		if len(r.dictionaryVolumes) > 0 {
+			return r.dictionaryVolumes[r.rng.Intn(len(r.dictionaryVolumes))], nil
+		}
+	}
+
 	if len(r.seedArticles) == 0 {
 		return Article{}, fmt.Errorf("no training articles available")
 	}
 
 	candidates := make([]Article, 0, len(r.seedArticles))
 	unread := make([]Article, 0, len(r.seedArticles))
-	qLower := strings.ToLower(topicFilter)
 
 	for _, a := range r.seedArticles {
 		if qLower != "" {
@@ -169,13 +214,117 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 		return candidates[r.rng.Intn(len(candidates))], nil
 	}
 
-	// If topic filter had no embedded matches and offline, pick any unread seed article
 	for _, a := range r.seedArticles {
 		if !seenSources[a.Source] {
 			return a, nil
 		}
 	}
 	return r.seedArticles[r.rng.Intn(len(r.seedArticles))], nil
+}
+
+// FetchDictionaryEntry looks up a word's definition from the live Free Dictionary API (if online)
+// or searches the embedded dictionary volumes.
+func (r *Reader) FetchDictionaryEntry(ctx context.Context, word string) (Article, error) {
+	cleanWord := strings.ToLower(strings.TrimSpace(word))
+	if cleanWord == "" {
+		return Article{}, fmt.Errorf("empty word")
+	}
+
+	if !r.DisableLiveFetch && time.Now().After(r.offlineUntil) {
+		if art, err := r.fetchLiveDictionaryAPI(ctx, cleanWord); err == nil {
+			return art, nil
+		}
+	}
+
+	// Fallback: search embedded dictionary volumes for DICT: <word> | ...
+	prefix := "dict: " + cleanWord + " |"
+	for _, vol := range r.dictionaryVolumes {
+		for _, line := range strings.Split(vol.Content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+				return Article{
+					Title:   "Dictionary Entry: " + cleanWord,
+					Topic:   "English Dictionary",
+					Source:  "dictionary:word:" + cleanWord,
+					Content: trimmed,
+				}, nil
+			}
+		}
+	}
+	return Article{}, fmt.Errorf("no dictionary entry found for %q", cleanWord)
+}
+
+func (r *Reader) fetchLiveDictionaryAPI(ctx context.Context, word string) (Article, error) {
+	endpoint := "https://api.dictionaryapi.dev/api/v2/entries/en/" + url.PathEscape(word)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Article{}, err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return Article{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Article{}, fmt.Errorf("dictionary api status %d", resp.StatusCode)
+	}
+
+	var entries []struct {
+		Word     string `json:"word"`
+		Meanings []struct {
+			PartOfSpeech string `json:"partOfSpeech"`
+			Definitions  []struct {
+				Definition string `json:"definition"`
+				Example    string `json:"example"`
+			} `json:"definitions"`
+		} `json:"meanings"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return Article{}, err
+	}
+	if err := json.Unmarshal(body, &entries); err != nil || len(entries) == 0 {
+		return Article{}, fmt.Errorf("decode dictionary entry failed")
+	}
+
+	var b strings.Builder
+	count := 0
+	for _, m := range entries[0].Meanings {
+		pos := strings.TrimSpace(m.PartOfSpeech)
+		if pos == "" {
+			pos = "word"
+		}
+		for _, d := range m.Definitions {
+			def := strings.TrimSpace(d.Definition)
+			if def == "" {
+				continue
+			}
+			ex := strings.TrimSpace(d.Example)
+			if ex != "" {
+				fmt.Fprintf(&b, "DICT: %s | %s | %s | %s\n", word, pos, def, ex)
+			} else {
+				fmt.Fprintf(&b, "DICT: %s | %s | %s\n", word, pos, def)
+			}
+			count++
+			if count >= 4 {
+				break
+			}
+		}
+		if count >= 4 {
+			break
+		}
+	}
+	if count == 0 {
+		return Article{}, fmt.Errorf("empty dictionary meanings for %q", word)
+	}
+	return Article{
+		Title:   "Live Dictionary: " + entries[0].Word,
+		Topic:   "English Dictionary",
+		Source:  "dictionary:live:" + word,
+		Content: b.String(),
+	}, nil
 }
 
 func (r *Reader) nextUnreadLocalNote(topicFilter string, seen map[string]bool) (Article, bool) {
@@ -393,7 +542,8 @@ func ensureNotesReadme(notesDir string) {
 	if _, err := os.Stat(p); err == nil {
 		return
 	}
-	guide := "Drop any .txt or .md study notes, lecture summaries, or articles into this folder!\n" +
-		"Matrix will automatically discover, read, and train its neural brain on your notes first.\n"
+	guide := "Drop any .txt or .md study notes, custom dictionary lists (DICT: word | pos | definition | example),\n" +
+		"lecture summaries, or articles into this folder!\n" +
+		"After Matrix finishes its built-in Dictionaries and Grammar Primer, it will read your notes first.\n"
 	_ = os.WriteFile(p, []byte(guide), 0o644)
 }

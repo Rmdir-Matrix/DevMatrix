@@ -21,7 +21,7 @@ var stopWords = map[string]bool{
 }
 
 // conversationalWords are everyday dialogue/grammar words that do not demand
-// domain-article lookup on their own (they still must exist in the trained vocabulary!).
+// domain-article lookup on their own (unless explicitly queried via define/meaning!).
 var conversationalWords = map[string]bool{
 	"hi": true, "hello": true, "hey": true, "goodbye": true, "bye": true,
 	"thanks": true, "thank": true, "please": true, "whats": true, "up": true,
@@ -35,6 +35,7 @@ var conversationalWords = map[string]bool{
 	"read": true, "reading": true, "speak": true, "sentences": true,
 	"grammar": true, "words": true, "smart": true, "help": true,
 	"tell": true, "explain": true, "describe": true, "define": true,
+	"mean": true, "means": true, "meaning": true,
 	"about": true, "know": true, "think": true, "good": true, "morning": true,
 }
 
@@ -63,6 +64,36 @@ func ParseCorpusContent(text string) ParsedCorpusItem {
 		line := strings.TrimSpace(rawLine)
 		if line == "" {
 			proseBuilder.WriteString("\n")
+			continue
+		}
+		if strings.HasPrefix(line, "DICT:") {
+			rest := strings.TrimSpace(line[len("DICT:"):])
+			parts := strings.Split(rest, "|")
+			if len(parts) >= 3 {
+				word := strings.TrimSpace(parts[0])
+				pos := strings.TrimSpace(parts[1])
+				def := strings.TrimSpace(parts[2])
+				if word != "" && def != "" {
+					defSentence := word + ", " + pos + ": " + strings.TrimSuffix(def, ".") + "."
+					proseBuilder.WriteString(defSentence + "\n")
+
+					wToks := Tokenize(word)
+					dToks := Tokenize(defSentence)
+					if len(wToks) > 0 && len(dToks) > 0 {
+						item.QAPairs = append(item.QAPairs,
+							QAPair{Prompt: append([]string{"define"}, wToks...), Response: dToks},
+							QAPair{Prompt: append([]string{"meaning"}, wToks...), Response: dToks},
+							QAPair{Prompt: wToks, Response: dToks},
+						)
+					}
+				}
+				if len(parts) >= 4 {
+					ex := strings.TrimSpace(parts[3])
+					if ex != "" {
+						proseBuilder.WriteString(ex + "\n")
+					}
+				}
+			}
 			continue
 		}
 		if strings.HasPrefix(line, "QA:") {
@@ -200,26 +231,46 @@ func ExtractKeywords(text string, limit int) []string {
 	return kw
 }
 
-// ExtractTopicWords returns non-conversational, non-stopword content terms from a user query.
+// ExtractTopicWords returns non-conversational, non-stopword content terms from a user query,
+// or the target headword when the query explicitly asks to define/explain the meaning of a word.
 func ExtractTopicWords(tokens []string) []string {
+	// Detect explicit dictionary lookup patterns:
+	// "define <word>", "meaning of <word>", "what does <word> mean"
+	for i, tok := range tokens {
+		if tok == "define" && i+1 < len(tokens) && isAlphabeticToken(tokens[i+1]) {
+			return []string{tokens[i+1]}
+		}
+		if tok == "meaning" && i+2 < len(tokens) && tokens[i+1] == "of" && isAlphabeticToken(tokens[i+2]) {
+			return []string{tokens[i+2]}
+		}
+		if (tok == "does" || tok == "do") && i+2 < len(tokens) && (tokens[i+2] == "mean" || tokens[i+2] == "means") && isAlphabeticToken(tokens[i+1]) {
+			return []string{tokens[i+1]}
+		}
+	}
+
 	seen := make(map[string]bool)
 	var out []string
 	for _, tok := range tokens {
 		if len(tok) < 2 || stopWords[tok] || conversationalWords[tok] {
 			continue
 		}
-		isAlpha := false
-		for _, r := range tok {
-			if unicode.IsLetter(r) {
-				isAlpha = true
-				break
-			}
-		}
-		if !isAlpha || seen[tok] {
+		if !isAlphabeticToken(tok) || seen[tok] {
 			continue
 		}
 		seen[tok] = true
 		out = append(out, tok)
 	}
 	return out
+}
+
+func isAlphabeticToken(tok string) bool {
+	if tok == selfToken {
+		return false
+	}
+	for _, r := range tok {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
 }

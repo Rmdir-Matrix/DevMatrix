@@ -152,25 +152,27 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 }
 
 func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader) {
+	dictsDone := cr.DictionaryCompleted(b.SeenSources)
+	dictsTotal := cr.DictionaryCount()
 	grammarDone := cr.GrammarCompleted(b.SeenSources)
 	grammarTotal := cr.GrammarCount()
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, theme.BoldGreen("Matrix Neural Brain & Corpus Status"))
 	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s) — %s\n",
-		theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level, grammarDone, grammarTotal))
+		theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal))
 	fmt.Fprintf(out, "  Level & XP      : Level %d (%d XP  •  next level at %d XP)\n",
 		b.Level, b.XP, brain.XPForLevel(b.Level+1))
-	fmt.Fprintf(out, "  Grammar Primer  : %d/%d foundational words & grammar lessons completed\n",
-		grammarDone, grammarTotal)
+	fmt.Fprintf(out, "  Curriculum      : Dictionaries %d/%d  →  Grammar %d/%d  →  Real Articles\n",
+		dictsDone, dictsTotal, grammarDone, grammarTotal)
 	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d learned words\n",
 		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab)
 	fmt.Fprintf(out, "  Active Synapses : %d learned neuron connections\n", b.Net.ActiveSynapses())
 	fmt.Fprintf(out, "  Training Stats  : %d items read • %d tokens trained • smoothed loss: %.4f\n",
 		b.ArticlesRead, b.TokensTrained, b.SmoothedLoss)
 	fmt.Fprintf(out, "  Study Memory    : %d/%d indexed passages\n", len(b.Passages), b.MaxPassages)
-	fmt.Fprintf(out, "  Article Sources : %d grammar lessons → Live Wikipedia API + %d articles + local notes (%s)\n",
-		grammarTotal, cr.SeedCount(), cr.NotesDir())
+	fmt.Fprintf(out, "  Article Sources : %d dictionaries → %d grammar lessons → Live Web + %d articles + notes (%s)\n",
+		dictsTotal, grammarTotal, cr.SeedCount(), cr.NotesDir())
 	if topics := b.TopTopics(5); len(topics) > 0 {
 		fmt.Fprintf(out, "  Top Topics      : %s\n", strings.Join(topics, ", "))
 	}
@@ -180,7 +182,11 @@ func printStatusBar(out io.Writer, theme ui.Theme, cfg config.AppConfig, b *brai
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	usedMB := float64(mem.Alloc) / (1024.0 * 1024.0)
-	stage := trainer.IntelligenceStage(b.Level, cr.GrammarCompleted(b.SeenSources), cr.GrammarCount())
+	stage := trainer.IntelligenceStage(
+		b.Level,
+		cr.DictionaryCompleted(b.SeenSources), cr.DictionaryCount(),
+		cr.GrammarCompleted(b.SeenSources), cr.GrammarCount(),
+	)
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "  %s %s (Lv.%d • %s)  |  %s %d words • %d synapses  |  %s %.1f/%d MB\n",
@@ -203,7 +209,7 @@ func runMainMenu(
 ) {
 	for {
 		printStatusBar(out, theme, cfg, activeBrain, articleReader)
-		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Easy AI training: Words & Grammar → Real Articles)"))
+		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Dictionaries → Grammar → Real Articles AI training)"))
 		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk, study & quiz with "+activeBrain.Name+")"))
 		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export name, share .matrix files, or switch Matrixes)"))
 		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats or change RAM / Name)"))
