@@ -15,12 +15,14 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/corpus"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/platform"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/trainer"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "Directory for Matrix saves and configuration (default: ./matrix_data)")
 	forceSetup := flag.Bool("setup", false, "Run the interactive RAM & Matrix Name setup wizard on startup")
+	autoTrain := flag.Bool("train", false, "Immediately start reading articles and training on startup")
 	showSpecsOnly := flag.Bool("specs", false, "Print detected hardware specs and auto-optimized AI profile, then exit")
 	noColor := flag.Bool("no-color", false, "Disable ANSI terminal colors")
 	flag.Parse()
@@ -77,6 +79,10 @@ func main() {
 		_ = activeBrain.Save(dataDir)
 	}
 
+	if *autoTrain {
+		_ = trainer.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir, true)
+	}
+
 	runMainMenu(reader, os.Stdout, theme, dataDir, hw, cfg, activeBrain, articleReader)
 }
 
@@ -95,7 +101,7 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, theme.BoldGreen("Matrix Neural Brain & Corpus Status"))
-	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s)\n", theme.Bold(b.Name), b.ID)
+	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s) — %s\n", theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level))
 	fmt.Fprintf(out, "  Level & XP      : Level %d (%d XP  •  next level at %d XP)\n",
 		b.Level, b.XP, brain.XPForLevel(b.Level+1))
 	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d vocabulary tokens\n",
@@ -117,10 +123,10 @@ func printStatusBar(out io.Writer, theme ui.Theme, cfg config.AppConfig, b *brai
 	usedMB := float64(mem.Alloc) / (1024.0 * 1024.0)
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %s %s (Lv.%d)  |  %s %d synapses • %d articles • %d vocab  |  %s %.1f/%d MB (%s)\n",
-		theme.Dim("Buddy:"), theme.BoldGreen(b.Name), b.Level,
-		theme.Dim("Brain:"), b.Net.ActiveSynapses(), b.ArticlesRead, b.Net.VocabSize(),
-		theme.Dim("RAM:"), usedMB, cfg.Profile.RAMBudgetMB, cfg.Profile.TierName,
+	fmt.Fprintf(out, "  %s %s (Lv.%d • %s)  |  %s %d synapses • %d articles  |  %s %.1f/%d MB\n",
+		theme.Dim("Buddy:"), theme.BoldGreen(b.Name), b.Level, trainer.IntelligenceStage(b.Level),
+		theme.Dim("Brain:"), b.Net.ActiveSynapses(), b.ArticlesRead,
+		theme.Dim("RAM:"), usedMB, cfg.Profile.RAMBudgetMB,
 	)
 	fmt.Fprintln(out, theme.Dim("  ──────────────────────────────────────────────────────────────────────────────────"))
 }
@@ -137,13 +143,13 @@ func runMainMenu(
 ) {
 	for {
 		printStatusBar(out, theme, cfg, activeBrain)
-		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Continuous AI article training & level messages — Step 3)"))
+		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Easy AI article training — press Enter to start!)"))
 		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk & study with "+activeBrain.Name+" — Step 4)"))
 		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export, import, or switch named Matrixes — Step 4)"))
-		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats, test 1 article step, or change RAM/Name)"))
+		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats or change RAM / Name)"))
 		fmt.Fprintf(out, "    %s Quit\n\n", theme.Dim("[Q]"))
 
-		choice, err := ui.Prompt(reader, out, "  Select mode: ")
+		choice, err := ui.Prompt(reader, out, "  Select mode [1]: ")
 		if err != nil {
 			_ = activeBrain.Save(dataDir)
 			fmt.Fprintln(out)
@@ -151,33 +157,32 @@ func runMainMenu(
 		}
 
 		switch strings.ToLower(choice) {
-		case "1", "t", "train":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Continuous Training Mode & Level-Evolving Messages are next in Step 3! (Try [4] to run a single-article neural test pass right now.)"))
+		case "", "1", "t", "train":
+			if err := trainer.RunInteractive(reader, out, theme, activeBrain, articleReader, dataDir, false); err != nil {
+				fmt.Fprintln(out, "  "+theme.Red("Training error: "+err.Error()))
+			}
 		case "2", "c", "chat":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Study Buddy Chat Mode is queued in Step 4!"))
+			fmt.Fprintln(out, "  "+theme.Yellow("→ Study Buddy Chat Mode is next in Step 4!"))
 		case "3", "e", "export", "share":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Matrix Export/Import Sharing is queued in Step 4!"))
+			fmt.Fprintln(out, "  "+theme.Yellow("→ Matrix Export/Import Sharing is next in Step 4!"))
 		case "4", "s", "setup", "specs", "brain":
 			printSpecsDiagnostic(out, theme, hw)
 			printBrainDiagnostic(out, theme, activeBrain, articleReader)
 
-			sub, sErr := ui.Prompt(reader, out, "\n  Options: [T] Train 1 sample article now  |  [S] Re-run RAM/Name setup  |  [Enter] Back: ")
+			sub, sErr := ui.Prompt(reader, out, "\n  Options: [T] Train 1 sample article  |  [S] Re-run RAM/Name setup  |  [Enter] Back: ")
 			if sErr != nil {
 				continue
 			}
 			switch strings.ToLower(sub) {
 			case "t":
-				fmt.Fprintln(out, "  "+theme.Cyan("Reading real article and running neural backpropagation..."))
 				art, aErr := articleReader.NextArticle(context.Background(), "", activeBrain.SeenSources)
-				if aErr != nil {
-					fmt.Fprintln(out, "  "+theme.Red("Could not read article: "+aErr.Error()))
-					continue
+				if aErr == nil {
+					rep := activeBrain.TrainOnArticle(art, 2)
+					_ = activeBrain.Save(dataDir)
+					fmt.Fprintf(out, "  %s Studied %q [%s] (%d tokens) → Loss: %.4f | Synapses: %d | Level: %d\n",
+						theme.BoldGreen("✓"), rep.ArticleTitle, rep.Topic, rep.TokensRead,
+						rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel)
 				}
-				rep := activeBrain.TrainOnArticle(art, 2)
-				_ = activeBrain.Save(dataDir)
-				fmt.Fprintf(out, "  %s Studied %q [%s] (%d tokens) → Loss: %.4f | Synapses: %d | Level: %d (+%d XP)\n",
-					theme.BoldGreen("✓"), rep.ArticleTitle, rep.Topic, rep.TokensRead,
-					rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel, rep.XPGained)
 			case "s":
 				updated, wErr := config.RunSetupWizard(reader, out, theme, hw, cfg)
 				if wErr == nil {
