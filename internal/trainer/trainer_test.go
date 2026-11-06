@@ -2,7 +2,6 @@ package trainer
 
 import (
 	"bytes"
-	"math/rand"
 	"strings"
 	"testing"
 
@@ -12,39 +11,7 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-func TestMilestoneMessages(t *testing.T) {
-	prof, _ := specs.BuildProfile(specs.HardwareInfo{TotalRAMMB: 4096, AvailableRAMMB: 2048, CPUCores: 2}, 512)
-	b := brain.NewBrain("Matrix", prof)
-	rng := rand.New(rand.NewSource(42))
-
-	rep := brain.TrainStepReport{
-		ArticleTitle:   "Neural Networks",
-		Topic:          "AI",
-		NewLevel:       1,
-		VocabSize:      120,
-		ActiveSynapses: 4200,
-		SampleKeywords: []string{"neuron", "synapse"},
-	}
-
-	m1 := GenerateTrainingThought(b, rep, 1, rng)
-	if m1 != "Matrix is learn now!" {
-		t.Fatalf("Level 1 milestone = %q, want %q", m1, "Matrix is learn now!")
-	}
-
-	rep.NewLevel = 10
-	m10 := GenerateTrainingThought(b, rep, 10, rng)
-	if m10 != "I'm learning stuff!" {
-		t.Fatalf("Level 10 milestone = %q, want %q", m10, "I'm learning stuff!")
-	}
-
-	rep.NewLevel = 100
-	m100 := GenerateTrainingThought(b, rep, 100, rng)
-	if m100 != "I am learning which makes more neuron connections in my brain." {
-		t.Fatalf("Level 100 milestone = %q, want %q", m100, "I am learning which makes more neuron connections in my brain.")
-	}
-}
-
-func TestRunLoopProgressesAndEmitsThoughts(t *testing.T) {
+func TestModelGeneratedThoughtsEvolveFromGrammarToArticles(t *testing.T) {
 	dir := t.TempDir()
 	cr, err := corpus.NewReader(dir)
 	if err != nil {
@@ -55,9 +22,14 @@ func TestRunLoopProgressesAndEmitsThoughts(t *testing.T) {
 	prof, _ := specs.BuildProfile(specs.HardwareInfo{TotalRAMMB: 4096, AvailableRAMMB: 2048, CPUCores: 2}, 512)
 	b := brain.NewBrain("Matrix", prof)
 
+	// Untrained model must produce empty thought (no hardcoded strings!)
+	if got := GenerateTrainingThought(b, brain.TrainStepReport{}); got != "" {
+		t.Fatalf("expected empty thought on untrained brain, got %q", got)
+	}
+
 	var out bytes.Buffer
 	err = RunLoop(&out, ui.NewTheme(false), b, cr, Options{
-		MaxArticles: 8,
+		MaxArticles: 15,
 		StepDelay:   0,
 		DataDir:     dir,
 	}, make(chan struct{}))
@@ -66,13 +38,13 @@ func TestRunLoopProgressesAndEmitsThoughts(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "Matrix is learn now!") {
-		t.Fatalf("expected Level 1 message in training output, got:\n%s", got)
+	if !strings.Contains(got, "[GRAMMAR]") {
+		t.Fatalf("expected [GRAMMAR] curriculum stage first, got:\n%s", got)
 	}
-	if !strings.Contains(got, "I'm learning stuff!") {
-		t.Fatalf("expected Level 10 milestone message after 8 articles, got:\n%s", got)
+	if !strings.Contains(got, "[ARTICLE]") {
+		t.Fatalf("expected transition to [ARTICLE] after 10 grammar lessons, got:\n%s", got)
 	}
-	if b.Level < 10 {
-		t.Fatalf("expected level >= 10 after 8 articles, got %d", b.Level)
+	if !strings.Contains(got, "💬 [Matrix • Level 1]:") {
+		t.Fatalf("expected model-decoded Level 1 thought in output, got:\n%s", got)
 	}
 }

@@ -6,17 +6,29 @@ import (
 )
 
 const (
-	padToken = "<pad>"
-	unkToken = "<unk>"
-	bosToken = "<bos>"
-	eosToken = "<eos>"
+	padToken     = "<pad>"
+	unkToken     = "<unk>"
+	bosToken     = "<bos>"
+	eosToken     = "<eos>"
+	sepToken     = "<sep>"
+	thoughtToken = "<thought>"
+	selfToken    = "<self>"
 
-	negativeSampleCount = 24
+	padID     = 0
+	unkID     = 1
+	bosID     = 2
+	eosID     = 3
+	sepID     = 4
+	thoughtID = 5
+	selfID    = 6
+
+	reservedTokensCount = 7
+	negativeSampleCount = 28
 	synapseThreshold    = float32(0.045)
 )
 
-// NeuralNet is a genuine trainable feed-forward context neural language and embedding model.
-// Weights grow dynamically up to MaxVocab so memory remains strictly within the user's RAM profile.
+// NeuralNet is a conditioned positional feed-forward neural language & embedding model.
+// Input layout (4 * EmbedDim): [PromptConditionMean, Pos(t-3), Pos(t-2), Pos(t-1)].
 type NeuralNet struct {
 	EmbedDim      int            `json:"embed_dim"`
 	HiddenNeurons int            `json:"hidden_neurons"`
@@ -25,12 +37,6 @@ type NeuralNet struct {
 	IDToToken     []string       `json:"id_to_token"`
 	TokenCounts   []int          `json:"token_counts"`
 
-	// Flattened float32 tensors for low memory overhead and fast CPU cache locality:
-	// Embeddings: len(IDToToken) * EmbedDim
-	// W1:         (2 * EmbedDim) * HiddenNeurons
-	// B1:         HiddenNeurons
-	// W2:         len(IDToToken) * HiddenNeurons
-	// B2:         len(IDToToken)
 	Embeddings []float32 `json:"embeddings"`
 	W1         []float32 `json:"w1"`
 	B1         []float32 `json:"b1"`
@@ -38,7 +44,8 @@ type NeuralNet struct {
 	B2         []float32 `json:"b2"`
 }
 
-// NewNeuralNet initializes a new neural network sized to the hardware profile.
+// NewNeuralNet initializes an untrained neural network sized to the hardware profile.
+// Vocabulary starts with ONLY structural markers (0 words learned yet).
 func NewNeuralNet(embedDim, hiddenNeurons, maxVocab int, seed int64) *NeuralNet {
 	if embedDim < 16 {
 		embedDim = 32
@@ -51,12 +58,12 @@ func NewNeuralNet(embedDim, hiddenNeurons, maxVocab int, seed int64) *NeuralNet 
 	}
 
 	rng := rand.New(rand.NewSource(seed))
-	inDim := 2 * embedDim
+	inDim := 4 * embedDim
 	w1Scale := float32(1.0 / math.Sqrt(float64(inDim)))
 
 	w1 := make([]float32, inDim*hiddenNeurons)
 	for i := range w1 {
-		w1[i] = float32(rng.NormFloat64()) * w1Scale * 0.35
+		w1[i] = float32(rng.NormFloat64()) * w1Scale * 0.30
 	}
 
 	nn := &NeuralNet{
@@ -70,8 +77,9 @@ func NewNeuralNet(embedDim, hiddenNeurons, maxVocab int, seed int64) *NeuralNet 
 		B1:            make([]float32, hiddenNeurons),
 	}
 
-	for _, sp := range []string{padToken, unkToken, bosToken, eosToken} {
+	for _, sp := range []string{padToken, unkToken, bosToken, eosToken, sepToken, thoughtToken, selfToken} {
 		nn.ensureToken(sp, rng)
+		nn.TokenCounts[len(nn.TokenCounts)-1] = 0
 	}
 	return nn
 }
@@ -82,8 +90,8 @@ func (nn *NeuralNet) ensureToken(tok string, rng *rand.Rand) int {
 		return id
 	}
 	if len(nn.IDToToken) >= nn.MaxVocab {
-		nn.TokenCounts[1]++ // <unk>
-		return 1
+		nn.TokenCounts[unkID]++
+		return unkID
 	}
 
 	id := len(nn.IDToToken)
@@ -111,12 +119,29 @@ func (nn *NeuralNet) RegisterTokens(tokens []string, rng *rand.Rand) {
 	}
 }
 
-// VocabSize returns the number of learned tokens in the neural vocabulary.
+// LearnedWordCount returns the number of real words/punctuation learned beyond structural markers.
+func (nn *NeuralNet) LearnedWordCount() int {
+	if len(nn.IDToToken) <= reservedTokensCount {
+		return 0
+	}
+	return len(nn.IDToToken) - reservedTokensCount
+}
+
+// VocabSize returns total vocabulary slots including structural tokens.
 func (nn *NeuralNet) VocabSize() int {
 	return len(nn.IDToToken)
 }
 
-// ActiveSynapses counts strong learned synaptic connections (|weight| > threshold) across layers.
+// KnowsToken reports whether a token has been trained into the neural vocabulary at least once.
+func (nn *NeuralNet) KnowsToken(tok string) bool {
+	id, ok := nn.TokenToID[tok]
+	if !ok || id < reservedTokensCount {
+		return false
+	}
+	return nn.TokenCounts[id] > 0
+}
+
+// ActiveSynapses counts strong learned synaptic weights (|weight| > threshold) across all layers.
 func (nn *NeuralNet) ActiveSynapses() int {
 	count := 0
 	for _, w := range nn.W1 {
@@ -137,32 +162,55 @@ func (nn *NeuralNet) ActiveSynapses() int {
 	return count
 }
 
-// TrainSentence runs forward + sampled-softmax cross-entropy backpropagation across a token slice.
-// Returns (sumLoss, tokenPredictions).
+// TrainSentence trains an unconditioned prose sentence: <bos> tokens... <eos>.
 func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) (float64, int) {
-	if len(tokens) == 0 {
+	return nn.TrainConditioned(nil, tokens, lr, rng)
+}
+
+// TrainConditioned runs forward + sampled-softmax cross-entropy backpropagation on
+// [condTokens -> <sep> -> targetTokens -> <eos>] (or [<bos> -> targetTokens -> <eos>] if condTokens is empty).
+func (nn *NeuralNet) TrainConditioned(condTokens []string, targetTokens []string, lr float32, rng *rand.Rand) (float64, int) {
+	if len(targetTokens) == 0 {
 		return 0, 0
 	}
 
-	ids := make([]int, 0, len(tokens)+2)
-	ids = append(ids, 2) // <bos>
-	for _, tok := range tokens {
+	condIDs := make([]int, 0, len(condTokens)+1)
+	for _, tok := range condTokens {
 		if id, ok := nn.TokenToID[tok]; ok {
-			ids = append(ids, id)
+			condIDs = append(condIDs, id)
 		} else {
-			ids = append(ids, nn.ensureToken(tok, rng))
+			condIDs = append(condIDs, nn.ensureToken(tok, rng))
 		}
 	}
-	ids = append(ids, 3) // <eos>
+
+	seq := make([]int, 0, len(targetTokens)+2)
+	if len(condIDs) > 0 {
+		seq = append(seq, sepID)
+	} else {
+		seq = append(seq, bosID)
+		condIDs = append(condIDs, bosID)
+	}
+	for _, tok := range targetTokens {
+		if id, ok := nn.TokenToID[tok]; ok {
+			seq = append(seq, id)
+		} else {
+			seq = append(seq, nn.ensureToken(tok, rng))
+		}
+	}
+	seq = append(seq, eosID)
 
 	vocabLen := len(nn.IDToToken)
-	if vocabLen < 5 {
+	if vocabLen <= reservedTokensCount+1 {
 		return 0, 0
 	}
 
 	D := nn.EmbedDim
 	H := nn.HiddenNeurons
-	inDim := 2 * D
+	inDim := 4 * D
+	if len(nn.W1) != inDim*H {
+		// Upgrade legacy W1 tensor cleanly if needed
+		nn.resizeInputDim(inDim, H, rng)
+	}
 
 	x := make([]float32, inDim)
 	h := make([]float32, H)
@@ -170,56 +218,56 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 	dz := make([]float32, H)
 	dx := make([]float32, inDim)
 
+	availNeg := vocabLen - 3
 	negCap := negativeSampleCount
-	if vocabLen-2 < negCap {
-		negCap = vocabLen - 2
+	if availNeg < negCap {
+		negCap = availNeg
 	}
 	if negCap < 1 {
-		return 0, 0
+		negCap = 1
 	}
-	cands := make([]int, 0, negCap+1)
-	logits := make([]float32, 0, negCap+1)
-	probs := make([]float32, 0, negCap+1)
+
+	cands := make([]int, 0, negCap+2)
+	logits := make([]float32, 0, negCap+2)
+	probs := make([]float32, 0, negCap+2)
 
 	var totalLoss float64
 	steps := 0
 	weightDecay := float32(1e-5)
 
-	for pos := 1; pos < len(ids); pos++ {
-		target := ids[pos]
-		prev := ids[pos-1]
+	for pos := 1; pos < len(seq); pos++ {
+		target := seq[pos]
+		prev1 := seq[pos-1]
+		prev2 := padID
+		if pos >= 2 {
+			prev2 = seq[pos-2]
+		}
+		prev3 := padID
+		if pos >= 3 {
+			prev3 = seq[pos-3]
+		}
 
-		// Build input vector x = [context_mean(pos-5..pos-2), embed(prev)]
-		for i := range x {
-			x[i] = 0
+		// Slot 0: Prompt/Conditioning Mean Vector
+		for d := 0; d < D; d++ {
+			x[d] = 0
 		}
-		ctxStart := pos - 5
-		if ctxStart < 0 {
-			ctxStart = 0
-		}
-		ctxCount := 0
-		for cPos := ctxStart; cPos < pos-1; cPos++ {
-			cid := ids[cPos]
+		for _, cid := range condIDs {
 			off := cid * D
 			for d := 0; d < D; d++ {
 				x[d] += nn.Embeddings[off+d]
 			}
-			ctxCount++
 		}
-		if ctxCount > 0 {
-			inv := 1.0 / float32(ctxCount)
-			for d := 0; d < D; d++ {
-				x[d] *= inv
-			}
-		} else {
-			// Use <bos> embedding if at first token
-			bosOff := 2 * D
-			copy(x[:D], nn.Embeddings[bosOff:bosOff+D])
+		invCond := 1.0 / float32(len(condIDs))
+		for d := 0; d < D; d++ {
+			x[d] *= invCond
 		}
-		prevOff := prev * D
-		copy(x[D:2*D], nn.Embeddings[prevOff:prevOff+D])
 
-		// Forward hidden layer: h = tanh(x * W1 + B1)
+		// Slots 1, 2, 3: Positional embeddings [pos-3, pos-2, pos-1]
+		copy(x[1*D:2*D], nn.Embeddings[prev3*D:(prev3+1)*D])
+		copy(x[2*D:3*D], nn.Embeddings[prev2*D:(prev2+1)*D])
+		copy(x[3*D:4*D], nn.Embeddings[prev1*D:(prev1+1)*D])
+
+		// Hidden forward: h = tanh(x * W1 + B1)
 		for j := 0; j < H; j++ {
 			sum := nn.B1[j]
 			for i := 0; i < inDim; i++ {
@@ -228,13 +276,16 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 			h[j] = float32(math.Tanh(float64(sum)))
 		}
 
-		// Candidate set: index 0 is true target, followed by sampled negative tokens
+		// Candidate set: [0]=target, always include eosID if target!=eosID, plus sampled negatives
 		cands = cands[:0]
 		cands = append(cands, target)
-		maxTries := (negCap + 1) * 4
+		if target != eosID {
+			cands = append(cands, eosID)
+		}
+		maxTries := (negCap + 2) * 4
 		for tries := 0; len(cands) < negCap+1 && tries < maxTries; tries++ {
 			neg := rng.Intn(vocabLen)
-			if neg == target || neg == 0 {
+			if neg == target || neg == padID || neg == bosID || neg == sepID {
 				continue
 			}
 			dup := false
@@ -249,7 +300,6 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 			}
 		}
 
-		// Compute candidate logits
 		logits = logits[:len(cands)]
 		probs = probs[:len(cands)]
 		maxLogit := float32(-1e30)
@@ -283,7 +333,7 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 		totalLoss += -math.Log(targetProb)
 		steps++
 
-		// Backpropagation through sampled output layer
+		// Backpropagation through output layer
 		for j := 0; j < H; j++ {
 			dh[j] = 0
 		}
@@ -301,7 +351,7 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 			nn.B2[cid] -= lr * grad
 		}
 
-		// Hidden activation derivative dz = dh * (1 - h^2) with gradient clipping
+		// Hidden gradient dz = dh * (1 - h^2)
 		for j := 0; j < H; j++ {
 			g := dh[j] * (1.0 - h[j]*h[j])
 			if g > 3.0 {
@@ -313,7 +363,7 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 			nn.B1[j] -= lr * g
 		}
 
-		// Backprop into W1 and input vector dx
+		// Backpropagate into W1 and input vector dx
 		for i := 0; i < inDim; i++ {
 			var sumDx float32
 			rowOff := i * H
@@ -326,19 +376,33 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 			dx[i] = sumDx
 		}
 
-		// Update immediate previous token embedding
-		for d := 0; d < D; d++ {
-			nn.Embeddings[prevOff+d] -= lr * dx[D+d]
+		// Update positional embeddings (skip padID=0)
+		if prev3 != padID {
+			off := prev3 * D
+			for d := 0; d < D; d++ {
+				nn.Embeddings[off+d] -= lr * dx[1*D+d]
+			}
 		}
-		// Update context window embeddings
-		if ctxCount > 0 {
-			ctxScale := lr / float32(ctxCount)
-			for cPos := ctxStart; cPos < pos-1; cPos++ {
-				cid := ids[cPos]
-				off := cid * D
-				for d := 0; d < D; d++ {
-					nn.Embeddings[off+d] -= ctxScale * dx[d]
-				}
+		if prev2 != padID {
+			off := prev2 * D
+			for d := 0; d < D; d++ {
+				nn.Embeddings[off+d] -= lr * dx[2*D+d]
+			}
+		}
+		off1 := prev1 * D
+		for d := 0; d < D; d++ {
+			nn.Embeddings[off1+d] -= lr * dx[3*D+d]
+		}
+
+		// Update prompt conditioning embeddings
+		condScale := lr * invCond
+		for _, cid := range condIDs {
+			if cid == padID {
+				continue
+			}
+			off := cid * D
+			for d := 0; d < D; d++ {
+				nn.Embeddings[off+d] -= condScale * dx[d]
 			}
 		}
 	}
@@ -346,63 +410,63 @@ func (nn *NeuralNet) TrainSentence(tokens []string, lr float32, rng *rand.Rand) 
 	return totalLoss, steps
 }
 
-// ScoreCandidates scores candidate next tokens given recent token history using forward inference.
-func (nn *NeuralNet) ScoreCandidates(history []string, candidates []string) []float32 {
-	out := make([]float32, len(candidates))
-	if len(candidates) == 0 || len(nn.IDToToken) == 0 {
+// ForwardLogits computes neural output logits for candidate token IDs given conditioning IDs and [prev3, prev2, prev1].
+func (nn *NeuralNet) ForwardLogits(condIDs []int, prev3, prev2, prev1 int, candidateIDs []int) []float32 {
+	out := make([]float32, len(candidateIDs))
+	if len(candidateIDs) == 0 || len(nn.IDToToken) == 0 {
 		return out
 	}
 
 	D := nn.EmbedDim
 	H := nn.HiddenNeurons
-	x := make([]float32, 2*D)
-
-	histIDs := make([]int, 0, len(history)+1)
-	histIDs = append(histIDs, 2) // <bos>
-	for _, tok := range history {
-		if id, ok := nn.TokenToID[tok]; ok {
-			histIDs = append(histIDs, id)
-		} else {
-			histIDs = append(histIDs, 1)
-		}
+	inDim := 4 * D
+	if len(nn.W1) != inDim*H {
+		return out
 	}
 
-	prev := histIDs[len(histIDs)-1]
-	ctxStart := len(histIDs) - 5
-	if ctxStart < 0 {
-		ctxStart = 0
-	}
-	ctxCount := 0
-	for i := ctxStart; i < len(histIDs)-1; i++ {
-		off := histIDs[i] * D
-		for d := 0; d < D; d++ {
-			x[d] += nn.Embeddings[off+d]
+	x := make([]float32, inDim)
+	if len(condIDs) > 0 {
+		valid := 0
+		for _, cid := range condIDs {
+			if cid >= 0 && cid < len(nn.IDToToken) {
+				off := cid * D
+				for d := 0; d < D; d++ {
+					x[d] += nn.Embeddings[off+d]
+				}
+				valid++
+			}
 		}
-		ctxCount++
-	}
-	if ctxCount > 0 {
-		inv := 1.0 / float32(ctxCount)
-		for d := 0; d < D; d++ {
-			x[d] *= inv
+		if valid > 0 {
+			inv := 1.0 / float32(valid)
+			for d := 0; d < D; d++ {
+				x[d] *= inv
+			}
 		}
 	} else {
-		copy(x[:D], nn.Embeddings[2*D:3*D])
+		copy(x[:D], nn.Embeddings[bosID*D:(bosID+1)*D])
 	}
-	copy(x[D:2*D], nn.Embeddings[prev*D:(prev+1)*D])
+
+	copySafe := func(slot int, tid int) {
+		if tid >= 0 && tid < len(nn.IDToToken) {
+			copy(x[slot*D:(slot+1)*D], nn.Embeddings[tid*D:(tid+1)*D])
+		}
+	}
+	copySafe(1, prev3)
+	copySafe(2, prev2)
+	copySafe(3, prev1)
 
 	h := make([]float32, H)
 	for j := 0; j < H; j++ {
 		sum := nn.B1[j]
-		for i := 0; i < 2*D; i++ {
+		for i := 0; i < inDim; i++ {
 			sum += x[i] * nn.W1[i*H+j]
 		}
 		h[j] = float32(math.Tanh(float64(sum)))
 	}
 
-	for k, cand := range candidates {
-		cid, ok := nn.TokenToID[cand]
-		if !ok {
-			out[k] = -10.0
+	for k, cid := range candidateIDs {
+		if cid < 0 || cid >= len(nn.IDToToken) {
+			out[k] = -20.0
 			continue
 		}
 		w2Off := cid * H
@@ -413,6 +477,15 @@ func (nn *NeuralNet) ScoreCandidates(history []string, candidates []string) []fl
 		out[k] = s
 	}
 	return out
+}
+
+func (nn *NeuralNet) resizeInputDim(inDim, H int, rng *rand.Rand) {
+	scale := float32(1.0 / math.Sqrt(float64(inDim)))
+	w1 := make([]float32, inDim*H)
+	for i := range w1 {
+		w1[i] = float32(rng.NormFloat64()) * scale * 0.30
+	}
+	nn.W1 = w1
 }
 
 // EmbedText computes an L2-normalized mean-pooled neural vector representation for semantic retrieval.
@@ -426,7 +499,7 @@ func (nn *NeuralNet) EmbedText(text string) []float32 {
 	matched := 0
 	for _, tok := range toks {
 		id, ok := nn.TokenToID[tok]
-		if !ok || id <= 3 {
+		if !ok || id < reservedTokensCount {
 			continue
 		}
 		off := id * D
@@ -452,7 +525,7 @@ func (nn *NeuralNet) EmbedText(text string) []float32 {
 	return vec
 }
 
-// CosineSimilarity computes the cosine similarity between two normalized embedding vectors.
+// CosineSimilarity computes cosine similarity between two L2-normalized embedding vectors.
 func CosineSimilarity(a, b []float32) float32 {
 	if len(a) == 0 || len(a) != len(b) {
 		return 0

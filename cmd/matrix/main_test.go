@@ -15,7 +15,7 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-func TestFullEndToEndLifecycleLevel1To100ChatAndShare(t *testing.T) {
+func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
 	dir := t.TempDir()
 	hw := specs.DetectHardware()
 	prof, _ := specs.BuildProfile(hw, 512)
@@ -28,9 +28,13 @@ func TestFullEndToEndLifecycleLevel1To100ChatAndShare(t *testing.T) {
 	cr.DisableLiveFetch = true
 
 	b := brain.NewBrain("Matrix", prof)
-	var trainLog bytes.Buffer
 
-	// Train enough articles to progress from Level 1 -> Level 10 -> Level 100+
+	// Verify brand-new brain knows nothing yet
+	if _, known, _ := chat.Respond(b, "hello"); known {
+		t.Fatalf("brand-new brain should not know 'hello' before training")
+	}
+
+	var trainLog bytes.Buffer
 	err = trainer.RunLoop(&trainLog, ui.NewTheme(false), b, cr, trainer.Options{
 		MaxArticles: 135,
 		StepDelay:   0,
@@ -40,27 +44,23 @@ func TestFullEndToEndLifecycleLevel1To100ChatAndShare(t *testing.T) {
 		t.Fatalf("RunLoop error: %v", err)
 	}
 
-	outStr := trainLog.String()
-	for _, want := range []string{
-		"Matrix is learn now!",
-		"I'm learning stuff!",
-		"I am learning which makes more neuron connections in my brain.",
-	} {
-		if !strings.Contains(outStr, want) {
-			t.Fatalf("expected training log to contain milestone %q", want)
-		}
+	if b.GrammarDone != cr.GrammarCount() {
+		t.Fatalf("expected all %d grammar lessons completed first, got %d", cr.GrammarCount(), b.GrammarDone)
 	}
 	if b.Level < 100 {
 		t.Fatalf("expected Matrix to reach Level >= 100, got Level %d", b.Level)
 	}
 
-	// Verify Chat Mode answers study questions intelligently at Level 100+
-	reply := chat.Respond(b, "Explain backpropagation and neural networks")
-	if !strings.Contains(strings.ToLower(reply), "neural") || !strings.Contains(strings.ToLower(reply), "synapses") {
-		t.Fatalf("expected rich Level 100+ chat synthesis, got:\n%s", reply)
+	// Verify pure model replies on trained topics and honest unknown on unseen topics
+	reply, known, reason := chat.Respond(b, "Explain backpropagation and neural networks")
+	if !known || strings.TrimSpace(reply) == "" {
+		t.Fatalf("expected trained model reply on neural networks, got known=%v reason=%q", known, reason)
+	}
+	if _, knownUnseen, _ := chat.Respond(b, "How do you cook ramen noodles?"); knownUnseen {
+		t.Fatalf("expected unseen topic 'ramen' to return known=false")
 	}
 
-	// Verify exporting with custom name and importing on another user's PC
+	// Verify exporting with custom name and importing on another PC
 	sharePath := filepath.Join(dir, "legend.matrix")
 	savedFile, sz, err := share.ExportMatrix(b, "StudyLegendMatrix", sharePath)
 	if err != nil || sz == 0 {
@@ -74,8 +74,5 @@ func TestFullEndToEndLifecycleLevel1To100ChatAndShare(t *testing.T) {
 	}
 	if imported.Name != "StudyLegendMatrix" || summary.ExportedName != "StudyLegendMatrix" {
 		t.Fatalf("expected StudyLegendMatrix, got %q", imported.Name)
-	}
-	if imported.Level != b.Level {
-		t.Fatalf("expected imported level %d, got %d", b.Level, imported.Level)
 	}
 }

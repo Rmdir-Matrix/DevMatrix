@@ -152,33 +152,40 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 }
 
 func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader) {
+	grammarDone := cr.GrammarCompleted(b.SeenSources)
+	grammarTotal := cr.GrammarCount()
+
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, theme.BoldGreen("Matrix Neural Brain & Corpus Status"))
-	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s) — %s\n", theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level))
+	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s) — %s\n",
+		theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level, grammarDone, grammarTotal))
 	fmt.Fprintf(out, "  Level & XP      : Level %d (%d XP  •  next level at %d XP)\n",
 		b.Level, b.XP, brain.XPForLevel(b.Level+1))
-	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d vocabulary tokens\n",
-		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.VocabSize(), b.Net.MaxVocab)
+	fmt.Fprintf(out, "  Grammar Primer  : %d/%d foundational words & grammar lessons completed\n",
+		grammarDone, grammarTotal)
+	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d learned words\n",
+		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab)
 	fmt.Fprintf(out, "  Active Synapses : %d learned neuron connections\n", b.Net.ActiveSynapses())
-	fmt.Fprintf(out, "  Training Stats  : %d articles read • %d tokens trained • smoothed loss: %.4f\n",
+	fmt.Fprintf(out, "  Training Stats  : %d items read • %d tokens trained • smoothed loss: %.4f\n",
 		b.ArticlesRead, b.TokensTrained, b.SmoothedLoss)
 	fmt.Fprintf(out, "  Study Memory    : %d/%d indexed passages\n", len(b.Passages), b.MaxPassages)
-	fmt.Fprintf(out, "  Article Sources : Live Wikipedia API + %d built-in study articles + local notes (%s)\n",
-		cr.SeedCount(), cr.NotesDir())
+	fmt.Fprintf(out, "  Article Sources : %d grammar lessons → Live Wikipedia API + %d articles + local notes (%s)\n",
+		grammarTotal, cr.SeedCount(), cr.NotesDir())
 	if topics := b.TopTopics(5); len(topics) > 0 {
 		fmt.Fprintf(out, "  Top Topics      : %s\n", strings.Join(topics, ", "))
 	}
 }
 
-func printStatusBar(out io.Writer, theme ui.Theme, cfg config.AppConfig, b *brain.Brain) {
+func printStatusBar(out io.Writer, theme ui.Theme, cfg config.AppConfig, b *brain.Brain, cr *corpus.Reader) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	usedMB := float64(mem.Alloc) / (1024.0 * 1024.0)
+	stage := trainer.IntelligenceStage(b.Level, cr.GrammarCompleted(b.SeenSources), cr.GrammarCount())
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %s %s (Lv.%d • %s)  |  %s %d synapses • %d articles  |  %s %.1f/%d MB\n",
-		theme.Dim("Buddy:"), theme.BoldGreen(b.Name), b.Level, trainer.IntelligenceStage(b.Level),
-		theme.Dim("Brain:"), b.Net.ActiveSynapses(), b.ArticlesRead,
+	fmt.Fprintf(out, "  %s %s (Lv.%d • %s)  |  %s %d words • %d synapses  |  %s %.1f/%d MB\n",
+		theme.Dim("Buddy:"), theme.BoldGreen(b.Name), b.Level, stage,
+		theme.Dim("Brain:"), b.Net.LearnedWordCount(), b.Net.ActiveSynapses(),
 		theme.Dim("RAM:"), usedMB, cfg.Profile.RAMBudgetMB,
 	)
 	fmt.Fprintln(out, theme.Dim("  ──────────────────────────────────────────────────────────────────────────────────"))
@@ -195,8 +202,8 @@ func runMainMenu(
 	articleReader *corpus.Reader,
 ) {
 	for {
-		printStatusBar(out, theme, cfg, activeBrain)
-		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Easy AI article training — press Enter to start!)"))
+		printStatusBar(out, theme, cfg, activeBrain, articleReader)
+		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Easy AI training: Words & Grammar → Real Articles)"))
 		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk, study & quiz with "+activeBrain.Name+")"))
 		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export name, share .matrix files, or switch Matrixes)"))
 		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats or change RAM / Name)"))

@@ -18,6 +18,9 @@ import (
 //go:embed seed_articles.json
 var embeddedSeedJSON []byte
 
+//go:embed grammar_curriculum.json
+var embeddedGrammarJSON []byte
+
 const (
 	maxHTTPBytes       = 256 * 1024
 	maxLocalFileBytes  = 512 * 1024
@@ -33,11 +36,12 @@ type Article struct {
 	Content string `json:"content"`
 }
 
-// Reader supplies real training articles from local study notes, live web encyclopedias,
-// and the built-in study encyclopedia.
+// Reader supplies real training articles, starting with sequential Foundational Words & Grammar
+// lessons first, followed by local study notes, live web encyclopedias, and the built-in encyclopedia.
 type Reader struct {
 	notesDir         string
 	httpClient       *http.Client
+	grammarLessons   []Article
 	seedArticles     []Article
 	rng              *rand.Rand
 	offlineUntil     time.Time
@@ -46,6 +50,11 @@ type Reader struct {
 
 // NewReader creates an Article Reader rooted at dataDir/study_notes.
 func NewReader(dataDir string) (*Reader, error) {
+	var grammar []Article
+	if err := json.Unmarshal(embeddedGrammarJSON, &grammar); err != nil {
+		return nil, fmt.Errorf("load embedded grammar curriculum: %w", err)
+	}
+
 	var seeds []Article
 	if err := json.Unmarshal(embeddedSeedJSON, &seeds); err != nil {
 		return nil, fmt.Errorf("load embedded study corpus: %w", err)
@@ -63,8 +72,9 @@ func NewReader(dataDir string) (*Reader, error) {
 		httpClient: &http.Client{
 			Timeout: httpRequestTimeout,
 		},
-		seedArticles: seeds,
-		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		grammarLessons: grammar,
+		seedArticles:   seeds,
+		rng:            rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -73,16 +83,43 @@ func (r *Reader) NotesDir() string {
 	return r.notesDir
 }
 
+// GrammarCount returns how many sequential foundational words & grammar lessons exist.
+func (r *Reader) GrammarCount() int {
+	return len(r.grammarLessons)
+}
+
+// GrammarCompleted counts how many foundational grammar lessons Matrix has completed so far.
+func (r *Reader) GrammarCompleted(seen map[string]bool) int {
+	done := 0
+	for _, g := range r.grammarLessons {
+		if seen[g.Source] {
+			done++
+		}
+	}
+	return done
+}
+
 // SeedCount returns how many built-in encyclopedic articles are embedded in the binary.
 func (r *Reader) SeedCount() int {
 	return len(r.seedArticles)
 }
 
-// NextArticle fetches the next training article, preferring unread local study notes,
-// then live web Wikipedia articles (with automatic offline cooldown fallback), and
-// finally the built-in study encyclopedia.
+// NextArticle fetches the next training text:
+//  0. Sequential Foundational Words & Grammar lessons first (unless user explicitly requested a custom topic)
+//  1. Unread local study notes (.txt / .md)
+//  2. Live web Wikipedia articles (with automatic offline cooldown fallback)
+//  3. Built-in real study encyclopedia
 func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSources map[string]bool) (Article, error) {
 	topicFilter = strings.TrimSpace(topicFilter)
+
+	// 0. Always master Foundational Words & Grammar lessons in strict order first during general training!
+	if topicFilter == "" {
+		for _, lesson := range r.grammarLessons {
+			if !seenSources[lesson.Source] {
+				return lesson, nil
+			}
+		}
+	}
 
 	// 1. Check unread local study notes (.txt / .md) first so user notes get top priority
 	if localArt, ok := r.nextUnreadLocalNote(topicFilter, seenSources); ok {

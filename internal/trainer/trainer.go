@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"os/signal"
 	"strings"
@@ -38,15 +37,25 @@ func RunInteractive(
 	autoStart bool,
 ) (bool, error) {
 	topic := ""
+	grammarDone := cr.GrammarCompleted(b.SeenSources)
+	grammarTotal := cr.GrammarCount()
+
 	if !autoStart {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, theme.BoldGreen("  === MODE 1: EASY AI TRAINING MODE ==="))
-		fmt.Fprintf(out, "  %s Stage: %s (Level %d • %d active neuron connections)\n",
-			theme.Green("•"), theme.BoldCyan(IntelligenceStage(b.Level)), b.Level, b.Net.ActiveSynapses())
-		fmt.Fprintf(out, "  %s Sources: Live Wikipedia articles + Local notes (%s) + Built-in Encyclopedia\n",
-			theme.Green("•"), theme.Dim(cr.NotesDir()))
+		fmt.Fprintf(out, "  %s Stage: %s (Level %d • Grammar %d/%d • %d learned words • %d synapses)\n",
+			theme.Green("•"),
+			theme.BoldCyan(IntelligenceStage(b.Level, grammarDone, grammarTotal)),
+			b.Level, grammarDone, grammarTotal, b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
+		if grammarDone < grammarTotal {
+			fmt.Fprintf(out, "  %s Curriculum: %s learns core words & grammar FIRST (%d/%d), then real articles!\n",
+				theme.Green("•"), b.Name, grammarDone, grammarTotal)
+		} else {
+			fmt.Fprintf(out, "  %s Sources: Live Wikipedia articles + Local notes (%s) + Built-in Encyclopedia\n",
+				theme.Green("•"), theme.Dim(cr.NotesDir()))
+		}
 
-		ans, err := ui.Prompt(reader, out, "  Focus topic (press Enter for Everything / Easy Auto-Study): ")
+		ans, err := ui.Prompt(reader, out, "  Focus topic (press Enter for Words/Grammar → Real Articles Auto-Study): ")
 		if err != nil && err != io.EOF {
 			return false, err
 		}
@@ -55,7 +64,7 @@ func RunInteractive(
 
 	fmt.Fprintln(out)
 	if topic == "" {
-		fmt.Fprintf(out, "  %s %s is powered ON and reading real articles! %s\n\n",
+		fmt.Fprintf(out, "  %s %s is powered ON and training! %s\n\n",
 			theme.BoldGreen("▶"), theme.Bold(b.Name),
 			theme.Yellow("(Press [Enter] to pause, or type 'chat' + [Enter] to talk to "+b.Name+")"))
 	} else {
@@ -89,7 +98,7 @@ func RunInteractive(
 	return false, err
 }
 
-// RunLoop executes the real article-reading and neural training loop until stopped or MaxArticles reached.
+// RunLoop executes the curriculum + real article-reading and neural training loop.
 func RunLoop(
 	out io.Writer,
 	theme ui.Theme,
@@ -105,10 +114,9 @@ func RunLoop(
 	signal.Notify(sigCh, os.Interrupt)
 	defer signal.Stop(sigCh)
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	sessionArticles := 0
 	sessionStartLevel := b.Level
-	spokenFirstLevel1 := false
+	spokenFirst := false
 
 	for {
 		if opts.MaxArticles > 0 && sessionArticles >= opts.MaxArticles {
@@ -130,37 +138,36 @@ func RunLoop(
 			break
 		}
 
-		wasFreshLevel1 := b.Level == 1 && b.ArticlesRead == 0 && !spokenFirstLevel1
-		rep := b.TrainOnArticle(art, 2)
+		wasFreshStart := b.ArticlesRead == 0 && !spokenFirst
+		epochs := 2
+		if strings.HasPrefix(art.Source, "curriculum:") {
+			epochs = 3 // Extra pass on core grammar & vocabulary lessons
+		}
+		rep := b.TrainOnArticle(art, epochs)
 		sessionArticles++
 
 		badge := sourceBadge(theme, rep.Source)
-		fmt.Fprintf(out, "  %s Read %-42s  %s\n",
+		fmt.Fprintf(out, "  %s %-42s  %s\n",
 			badge,
 			truncateTitle(rep.ArticleTitle, 42),
-			theme.Dim(fmt.Sprintf("(%d tokens • loss %.3f • %d synapses • Lv.%d)",
-				rep.TokensRead, rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel)),
+			theme.Dim(fmt.Sprintf("(%d words vocab • loss %.3f • %d synapses • Lv.%d)",
+				rep.VocabSize, rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel)),
 		)
 
-		// Determine if Matrix should speak a level-appropriate thought right now
 		crossed := detectCrossedMilestone(rep.OldLevel, rep.NewLevel)
-		if wasFreshLevel1 {
-			spokenFirstLevel1 = true
-			// Emit the signature Level 1 line first!
-			lvl1Rep := rep
-			lvl1Rep.NewLevel = 1
-			msg := GenerateTrainingThought(b, lvl1Rep, 1, rng)
-			printMatrixThought(out, theme, b.Name, 1, msg)
-		}
-
-		if crossed > 1 {
-			mRep := rep
-			mRep.NewLevel = crossed
-			msg := GenerateTrainingThought(b, mRep, crossed, rng)
-			printMatrixThought(out, theme, b.Name, crossed, msg)
-		} else if !wasFreshLevel1 && (sessionArticles%3 == 0 || rep.NewLevel > rep.OldLevel && sessionArticles%2 == 0) {
-			msg := GenerateTrainingThought(b, rep, 0, rng)
-			printMatrixThought(out, theme, b.Name, rep.NewLevel, msg)
+		if wasFreshStart {
+			spokenFirst = true
+			if msg := GenerateTrainingThought(b, rep); msg != "" {
+				printMatrixThought(out, theme, b.Name, 1, msg)
+			}
+		} else if crossed > 1 {
+			if msg := GenerateTrainingThought(b, rep); msg != "" {
+				printMatrixThought(out, theme, b.Name, crossed, msg)
+			}
+		} else if sessionArticles%3 == 0 {
+			if msg := GenerateTrainingThought(b, rep); msg != "" {
+				printMatrixThought(out, theme, b.Name, rep.NewLevel, msg)
+			}
 		}
 
 		if opts.DataDir != "" && sessionArticles%5 == 0 {
@@ -186,8 +193,8 @@ finish:
 		}
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %s Training paused & saved! Studied %d articles this session (Lv.%d → Lv.%d • %d active neuron connections).\n",
-		theme.BoldGreen("✓"), sessionArticles, sessionStartLevel, b.Level, b.Net.ActiveSynapses())
+	fmt.Fprintf(out, "  %s Training paused & saved! Completed %d items (Lv.%d → Lv.%d • %d words learned • %d active neuron connections).\n",
+		theme.BoldGreen("✓"), sessionArticles, sessionStartLevel, b.Level, b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
 	return nil
 }
 
@@ -211,12 +218,14 @@ func printMatrixThought(out io.Writer, theme ui.Theme, name string, level int, m
 
 func sourceBadge(theme ui.Theme, src string) string {
 	switch {
+	case strings.HasPrefix(src, "curriculum:"):
+		return theme.Yellow("[GRAMMAR]")
 	case strings.HasPrefix(src, "http://"), strings.HasPrefix(src, "https://"), strings.HasPrefix(src, "wikipedia:"):
-		return theme.BoldCyan("[WEB]   ")
+		return theme.BoldCyan("[WEB]    ")
 	case strings.HasPrefix(src, "local:"):
-		return theme.Magenta("[NOTES] ")
+		return theme.Magenta("[NOTES]  ")
 	default:
-		return theme.Green("[STUDY] ")
+		return theme.Green("[ARTICLE]")
 	}
 }
 

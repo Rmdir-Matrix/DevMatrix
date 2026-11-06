@@ -19,9 +19,14 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 )
 
-const maxTransitionsKeys = 12000
+const (
+	maxNGramKeys        = 28000
+	maxFollowersPerKey  = 18
+	maxPromptCueKeys    = 6000
+	maxStartersPerCue   = 14
+)
 
-// Passage stores a learned factual study excerpt indexed by keywords and source metadata.
+// Passage stores a learned study excerpt indexed by keywords and source metadata.
 type Passage struct {
 	Title    string   `json:"title"`
 	Topic    string   `json:"topic"`
@@ -30,7 +35,7 @@ type Passage struct {
 	Keywords []string `json:"keywords"`
 }
 
-// TrainStepReport summarizes the metrics from training on a single article.
+// TrainStepReport summarizes the metrics from training on a single lesson or article.
 type TrainStepReport struct {
 	ArticleTitle   string
 	Topic          string
@@ -47,32 +52,34 @@ type TrainStepReport struct {
 	SampleKeywords []string
 }
 
-// Brain encapsulates a named Matrix instance's neural network, phrase transitions,
-// semantic article memory, and progression state.
+// Brain encapsulates a named Matrix instance's neural network, learned transition statistics,
+// semantic article memory, and progression state. Starts 100% blank with zero pre-built answers.
 type Brain struct {
 	mu sync.Mutex `json:"-"`
 
-	ID                string             `json:"id"`
-	Name              string             `json:"name"`
-	CreatedAt         string             `json:"created_at"`
-	UpdatedAt         string             `json:"updated_at"`
-	Level             int                `json:"level"`
-	XP                int64              `json:"xp"`
-	ArticlesRead      int                `json:"articles_read"`
-	TokensTrained     int64              `json:"tokens_trained"`
-	TrainingSteps     int64              `json:"training_steps"`
-	InitialLoss       float64            `json:"initial_loss"`
-	SmoothedLoss      float64            `json:"smoothed_loss"`
-	MaxPassages       int                `json:"max_passages"`
-	TopicsCount       map[string]int     `json:"topics_count"`
-	SeenSources       map[string]bool    `json:"seen_sources"`
-	RecentTitles      []string           `json:"recent_titles"`
-	Passages          []Passage          `json:"passages"`
-	Transitions       map[string][]string `json:"transitions"`
-	Net               *NeuralNet         `json:"net"`
+	ID             string                    `json:"id"`
+	Name           string                    `json:"name"`
+	CreatedAt      string                    `json:"created_at"`
+	UpdatedAt      string                    `json:"updated_at"`
+	Level          int                       `json:"level"`
+	XP             int64                     `json:"xp"`
+	ArticlesRead   int                       `json:"articles_read"`
+	GrammarDone    int                       `json:"grammar_done"`
+	TokensTrained  int64                     `json:"tokens_trained"`
+	TrainingSteps  int64                     `json:"training_steps"`
+	InitialLoss    float64                   `json:"initial_loss"`
+	SmoothedLoss   float64                   `json:"smoothed_loss"`
+	MaxPassages    int                       `json:"max_passages"`
+	TopicsCount    map[string]int            `json:"topics_count"`
+	SeenSources    map[string]bool           `json:"seen_sources"`
+	RecentTitles   []string                  `json:"recent_titles"`
+	Passages       []Passage                 `json:"passages"`
+	NGramCounts    map[string]map[string]int `json:"ngram_counts"`
+	PromptStarters map[string]map[string]int `json:"prompt_starters"`
+	Net            *NeuralNet                `json:"net"`
 }
 
-// NewBrain constructs a fresh Level-1 Matrix Brain sized according to the hardware profile.
+// NewBrain constructs a completely blank Level-1 Matrix Brain with zero learned words or answers.
 func NewBrain(name string, prof specs.ComputeProfile) *Brain {
 	if strings.TrimSpace(name) == "" {
 		name = "Matrix"
@@ -84,19 +91,20 @@ func NewBrain(name string, prof specs.ComputeProfile) *Brain {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	return &Brain{
-		ID:           randomHexID(8),
-		Name:         strings.TrimSpace(name),
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		Level:        1,
-		XP:           0,
-		MaxPassages:  maxPass,
-		TopicsCount:  make(map[string]int),
-		SeenSources:  make(map[string]bool),
-		RecentTitles: make([]string, 0, 16),
-		Passages:     make([]Passage, 0, 128),
-		Transitions:  make(map[string][]string, 512),
-		Net:          NewNeuralNet(prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, time.Now().UnixNano()),
+		ID:             randomHexID(8),
+		Name:           strings.TrimSpace(name),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Level:          1,
+		XP:             0,
+		MaxPassages:    maxPass,
+		TopicsCount:    make(map[string]int),
+		SeenSources:    make(map[string]bool),
+		RecentTitles:   make([]string, 0, 16),
+		Passages:       make([]Passage, 0, 128),
+		NGramCounts:    make(map[string]map[string]int, 512),
+		PromptStarters: make(map[string]map[string]int, 256),
+		Net:            NewNeuralNet(prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, time.Now().UnixNano()),
 	}
 }
 
@@ -141,8 +149,8 @@ func (b *Brain) ApplyProfileCaps(prof specs.ComputeProfile) {
 	}
 }
 
-// TrainOnArticle ingests a real article, runs multi-pass neural backpropagation, updates
-// syntactic transitions and semantic study memory, and advances XP & Level.
+// TrainOnArticle ingests a grammar lesson or real article, runs neural backpropagation across
+// prose sentences, conversational QA pairs, and self-thoughts, and updates learned statistics.
 func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -150,36 +158,101 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 	if epochs < 1 {
 		epochs = 2
 	}
-	if b.TopicsCount == nil {
-		b.TopicsCount = make(map[string]int)
-	}
-	if b.SeenSources == nil {
-		b.SeenSources = make(map[string]bool)
-	}
-	if b.Transitions == nil {
-		b.Transitions = make(map[string][]string)
-	}
+	b.ensureMaps()
 
-	sentences := SplitSentences(art.Content)
+	parsed := ParseCorpusContent(art.Content)
 	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
 
-	tokenizedSentences := make([][]string, 0, len(sentences))
+	tokenizedSentences := make([][]string, 0, len(parsed.Sentences))
 	tokensRead := 0
-	for _, sent := range sentences {
+
+	// 1. Register vocabulary across sentences, QA pairs, and thoughts first
+	for _, sent := range parsed.Sentences {
 		toks := Tokenize(sent)
-		if len(toks) < 3 {
+		if len(toks) < 2 {
 			continue
 		}
 		b.Net.RegisterTokens(toks, rng)
-		b.learnTransitions(toks)
+		b.recordSequenceCounts(bosToken, toks, 1)
 		tokensRead += len(toks)
 		tokenizedSentences = append(tokenizedSentences, toks)
 	}
+	for _, qa := range parsed.QAPairs {
+		b.Net.RegisterTokens(qa.Prompt, rng)
+		b.Net.RegisterTokens(qa.Response, rng)
+		b.recordConditionedCounts(qa.Prompt, qa.Response, 3)
+		tokensRead += len(qa.Prompt) + len(qa.Response)
+	}
+	for _, th := range parsed.Thoughts {
+		b.Net.RegisterTokens(th, rng)
+		stageCue := thoughtStageCue(b.Level)
+		b.recordConditionedCounts([]string{thoughtToken, stageCue}, th, 3)
+		tokensRead += len(th)
+	}
 
-	// Adaptive learning rate that gently anneals as training steps accumulate
-	lr := float32(0.14 / (1.0 + 0.0001*float64(b.TrainingSteps)))
-	if lr < 0.02 {
-		lr = 0.02
+	// Self-supervised study conditioning from real article sentences:
+	// Every informative sentence teaches Matrix how to answer prompts about its keywords!
+	type condSample struct {
+		cond []string
+		resp []string
+	}
+	var selfStudy []condSample
+	titleKWs := ExtractKeywords(art.Title, 4)
+
+	for _, sent := range parsed.Sentences {
+		toks := Tokenize(sent)
+		if len(toks) < 5 || len(toks) > 60 {
+			continue
+		}
+		kw := ExtractKeywords(sent, 8)
+		if len(kw) >= 2 {
+			cues := append([]string(nil), kw...)
+			for _, tk := range titleKWs {
+				cues = append(cues, tk)
+			}
+			selfStudy = append(selfStudy, condSample{cond: cues, resp: toks})
+			b.recordConditionedCounts(cues, toks, 2)
+
+			if !strings.HasPrefix(art.Source, "curriculum:") {
+				b.storePassage(Passage{
+					Title:    art.Title,
+					Topic:    art.Topic,
+					Source:   art.Source,
+					Text:     sent,
+					Keywords: kw,
+				})
+			}
+		}
+	}
+
+	// Once grammar foundation is learned, reading real articles also trains new article-grounded thoughts
+	// using words the model has already learned!
+	sampleKW := ExtractKeywords(art.Title+" "+art.Content, 6)
+	if !strings.HasPrefix(art.Source, "curriculum:") && len(sampleKW) >= 2 && b.Net.KnowsToken("learning") {
+		var dynThought []string
+		if b.Level >= 75 && b.Net.KnowsToken("connections") {
+			dynThought = Tokenize(fmt.Sprintf(
+				"I am learning about %s and %s which makes more neuron connections in my brain.",
+				sampleKW[0], sampleKW[1],
+			))
+		} else if b.Level >= 20 && b.Net.KnowsToken("connect") {
+			dynThought = Tokenize(fmt.Sprintf(
+				"Reading about %s helps me connect %s and %s in my memory.",
+				sampleKW[0], sampleKW[0], sampleKW[1],
+			))
+		} else {
+			dynThought = Tokenize(fmt.Sprintf("I'm learning stuff about %s and %s!", sampleKW[0], sampleKW[1]))
+		}
+		b.Net.RegisterTokens(dynThought, rng)
+		stageCue := thoughtStageCue(b.Level)
+		b.recordConditionedCounts([]string{thoughtToken, stageCue, sampleKW[0]}, dynThought, 2)
+		parsed.Thoughts = append(parsed.Thoughts, dynThought)
+	}
+
+	// 2. Run neural backpropagation across prose, QA pairs, self-study associations, and thoughts
+	lr := float32(0.13 / (1.0 + 0.00008*float64(b.TrainingSteps)))
+	if lr < 0.025 {
+		lr = 0.025
 	}
 
 	var lossSum float64
@@ -188,6 +261,22 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 	for ep := 0; ep < epochs; ep++ {
 		for _, toks := range tokenizedSentences {
 			l, st := b.Net.TrainSentence(toks, lr, rng)
+			lossSum += l
+			predSteps += st
+		}
+		for _, qa := range parsed.QAPairs {
+			l, st := b.Net.TrainConditioned(qa.Prompt, qa.Response, lr*1.15, rng)
+			lossSum += l
+			predSteps += st
+		}
+		for _, ss := range selfStudy {
+			l, st := b.Net.TrainConditioned(ss.cond, ss.resp, lr, rng)
+			lossSum += l
+			predSteps += st
+		}
+		stageCue := thoughtStageCue(b.Level)
+		for _, th := range parsed.Thoughts {
+			l, st := b.Net.TrainConditioned([]string{thoughtToken, stageCue}, th, lr*1.1, rng)
 			lossSum += l
 			predSteps += st
 		}
@@ -201,32 +290,16 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 		b.InitialLoss = avgLoss
 		b.SmoothedLoss = avgLoss
 	} else if avgLoss > 0 {
-		b.SmoothedLoss = 0.82*b.SmoothedLoss + 0.18*avgLoss
-	}
-
-	// Index concise, informative passages into bounded semantic memory
-	for _, sent := range sentences {
-		words := strings.Fields(sent)
-		if len(words) < 7 || len(words) > 65 {
-			continue
-		}
-		kw := ExtractKeywords(sent, 12)
-		if len(kw) < 3 {
-			continue
-		}
-		b.storePassage(Passage{
-			Title:    art.Title,
-			Topic:    art.Topic,
-			Source:   art.Source,
-			Text:     sent,
-			Keywords: kw,
-		})
+		b.SmoothedLoss = 0.80*b.SmoothedLoss + 0.20*avgLoss
 	}
 
 	oldLevel := b.Level
-	xpGain := int64(45 + minInt(tokensRead/3, 180))
+	xpGain := int64(48 + minInt(tokensRead/3, 185))
 	if !b.SeenSources[art.Source] && art.Source != "" {
-		xpGain += 35 // Novel article discovery bonus
+		xpGain += 35
+		if strings.HasPrefix(art.Source, "curriculum:") {
+			b.GrammarDone++
+		}
 	}
 
 	b.XP += xpGain
@@ -245,66 +318,131 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainStepReport {
 	b.pushRecentTitle(art.Title)
 	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	sampleKW := ExtractKeywords(art.Title+" "+art.Content, 6)
-	synapses := b.Net.ActiveSynapses()
-
 	return TrainStepReport{
 		ArticleTitle:   art.Title,
 		Topic:          topic,
 		Source:         art.Source,
 		TokensRead:     tokensRead,
-		SentencesRead:  len(sentences),
+		SentencesRead:  len(parsed.Sentences) + len(parsed.QAPairs),
 		AvgLoss:        avgLoss,
 		SmoothedLoss:   b.SmoothedLoss,
 		OldLevel:       oldLevel,
 		NewLevel:       b.Level,
 		XPGained:       xpGain,
-		ActiveSynapses: synapses,
-		VocabSize:      b.Net.VocabSize(),
+		ActiveSynapses: b.Net.ActiveSynapses(),
+		VocabSize:      b.Net.LearnedWordCount(),
 		SampleKeywords: sampleKW,
 	}
 }
 
-func (b *Brain) learnTransitions(tokens []string) {
-	if len(b.Transitions) >= maxTransitionsKeys {
+func thoughtStageCue(level int) string {
+	switch {
+	case level <= 3:
+		return "stage_1"
+	case level <= 8:
+		return "stage_2"
+	case level <= 24:
+		return "stage_3"
+	case level <= 74:
+		return "stage_4"
+	default:
+		return "stage_5"
+	}
+}
+
+func (b *Brain) ensureMaps() {
+	if b.TopicsCount == nil {
+		b.TopicsCount = make(map[string]int)
+	}
+	if b.SeenSources == nil {
+		b.SeenSources = make(map[string]bool)
+	}
+	if b.NGramCounts == nil {
+		b.NGramCounts = make(map[string]map[string]int)
+	}
+	if b.PromptStarters == nil {
+		b.PromptStarters = make(map[string]map[string]int)
+	}
+}
+
+func (b *Brain) recordConditionedCounts(prompt []string, resp []string, weight int) {
+	if len(resp) == 0 {
 		return
 	}
-	prev1 := bosToken
-	prev2 := bosToken
+	b.recordSequenceCounts(sepToken, resp, weight)
+
+	starter := resp[0]
+	if len(resp) >= 2 {
+		starter = resp[0] + " " + resp[1]
+	}
+
+	// Index exact short prompt phrase + individual prompt tokens -> response starter
+	if len(prompt) <= 5 {
+		phraseKey := "p:" + strings.Join(prompt, "_")
+		b.addStarterCount(phraseKey, starter, weight*3)
+	}
+	for i, pt := range prompt {
+		b.addStarterCount(pt, starter, weight)
+		if i+1 < len(prompt) {
+			b.addStarterCount(pt+"_"+prompt[i+1], starter, weight*2)
+		}
+	}
+}
+
+func (b *Brain) recordSequenceCounts(startMarker string, tokens []string, weight int) {
+	prev3 := padToken
+	prev2 := padToken
+	prev1 := startMarker
 	for _, tok := range tokens {
-		key2 := prev2 + " " + prev1
-		b.appendUniqueFollower(key2, tok, 10)
-		b.appendUniqueFollower(prev1, tok, 14)
+		b.addNGramCount(prev3+" "+prev2+" "+prev1, tok, weight*2)
+		b.addNGramCount(prev2+" "+prev1, tok, weight)
+		b.addNGramCount(prev1, tok, weight)
+		prev3 = prev2
 		prev2 = prev1
 		prev1 = tok
 	}
+	b.addNGramCount(prev3+" "+prev2+" "+prev1, eosToken, weight*2)
+	b.addNGramCount(prev2+" "+prev1, eosToken, weight)
+	b.addNGramCount(prev1, eosToken, weight)
 }
 
-func (b *Brain) appendUniqueFollower(key, next string, capPerKey int) {
-	list := b.Transitions[key]
-	for _, existing := range list {
-		if existing == next {
+func (b *Brain) addNGramCount(key, next string, weight int) {
+	sub, ok := b.NGramCounts[key]
+	if !ok {
+		if len(b.NGramCounts) >= maxNGramKeys {
 			return
 		}
+		sub = make(map[string]int, 4)
+		b.NGramCounts[key] = sub
 	}
-	if len(list) >= capPerKey {
+	if _, exists := sub[next]; !exists && len(sub) >= maxFollowersPerKey {
 		return
 	}
-	if len(list) == 0 && len(b.Transitions) >= maxTransitionsKeys {
+	sub[next] += weight
+}
+
+func (b *Brain) addStarterCount(cue, starter string, weight int) {
+	sub, ok := b.PromptStarters[cue]
+	if !ok {
+		if len(b.PromptStarters) >= maxPromptCueKeys {
+			return
+		}
+		sub = make(map[string]int, 4)
+		b.PromptStarters[cue] = sub
+	}
+	if _, exists := sub[starter]; !exists && len(sub) >= maxStartersPerCue {
 		return
 	}
-	b.Transitions[key] = append(list, next)
+	sub[starter] += weight
 }
 
 func (b *Brain) storePassage(p Passage) {
-	// Deduplicate identical sentences
 	for _, existing := range b.Passages {
 		if existing.Text == p.Text {
 			return
 		}
 	}
 	if len(b.Passages) >= b.MaxPassages {
-		// Evict oldest 10% slice so memory stays bounded without O(n) shift on every insert
 		drop := b.MaxPassages / 10
 		if drop < 1 {
 			drop = 1
@@ -335,7 +473,10 @@ func (b *Brain) pushRecentTitle(title string) {
 func (b *Brain) SearchPassages(query string, topK int) []Passage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.searchPassagesLocked(query, topK)
+}
 
+func (b *Brain) searchPassagesLocked(query string, topK int) []Passage {
 	if len(b.Passages) == 0 || topK <= 0 {
 		return nil
 	}
@@ -378,10 +519,13 @@ func (b *Brain) SearchPassages(query string, topK int) []Passage {
 			}
 		}
 
+		if overlap <= 0 {
+			continue
+		}
 		pVec := b.Net.EmbedText(p.Text)
 		sim := float64(CosineSimilarity(qVec, pVec))
 		totalScore := overlap + math.Max(0, sim)*1.5
-		if totalScore > 0.35 {
+		if totalScore > 0.8 {
 			matches = append(matches, scored{p: p, score: totalScore})
 		}
 	}
@@ -471,7 +615,7 @@ func (b *Brain) Save(dataDir string) error {
 	return os.Rename(tmp, target)
 }
 
-// LoadOrCreate loads an existing Brain from disk or creates a new Level-1 Brain.
+// LoadOrCreate loads an existing Brain from disk or creates a new blank Level-1 Brain.
 func LoadOrCreate(dataDir, name string, prof specs.ComputeProfile) (*Brain, bool, error) {
 	target := BrainFilePath(dataDir, name)
 	f, err := os.Open(target)
@@ -494,15 +638,7 @@ func LoadOrCreate(dataDir, name string, prof specs.ComputeProfile) (*Brain, bool
 	if err := json.NewDecoder(gr).Decode(&b); err != nil {
 		return nil, false, err
 	}
-	if b.TopicsCount == nil {
-		b.TopicsCount = make(map[string]int)
-	}
-	if b.SeenSources == nil {
-		b.SeenSources = make(map[string]bool)
-	}
-	if b.Transitions == nil {
-		b.Transitions = make(map[string][]string)
-	}
+	b.ensureMaps()
 	b.ApplyProfileCaps(prof)
 	return &b, true, nil
 }
