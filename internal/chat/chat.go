@@ -14,6 +14,7 @@ import (
 )
 
 // RunInteractive starts Mode 2: interactive Study Buddy Chat Mode.
+// Returns switchToTrain=true if the user types /train inside chat.
 func RunInteractive(
 	reader *bufio.Reader,
 	out io.Writer,
@@ -21,13 +22,13 @@ func RunInteractive(
 	b *brain.Brain,
 	cr *corpus.Reader,
 	dataDir string,
-) error {
+) (bool, error) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, theme.BoldCyan("  === MODE 2: STUDY BUDDY CHAT MODE ==="))
 	fmt.Fprintf(out, "  %s Connected to %s (Level %d • %s • %d synapses • %d articles read)\n",
 		theme.Cyan("•"), theme.BoldGreen(b.Name), b.Level,
 		trainer.IntelligenceStage(b.Level), b.Net.ActiveSynapses(), b.ArticlesRead)
-	fmt.Fprintln(out, "  "+theme.Dim("Commands: /quiz [topic] • /study <topic> • /summary • /brain • /help • /back"))
+	fmt.Fprintln(out, "  "+theme.Dim("Commands: /quiz [topic] • /study <topic> • /summary • /brain • /train • /back"))
 	fmt.Fprintln(out)
 
 	printBuddyReply(out, theme, b.Name, b.Level, OpeningGreeting(b))
@@ -37,7 +38,7 @@ func RunInteractive(
 		userMsg, err := ui.Prompt(reader, out, theme.Bold("  You > "))
 		if err != nil {
 			_ = b.Save(dataDir)
-			return nil
+			return false, nil
 		}
 		if userMsg == "" {
 			continue
@@ -47,7 +48,11 @@ func RunInteractive(
 		if lower == "/back" || lower == "/exit" || lower == "/quit" || lower == "exit" || lower == "quit" {
 			_ = b.Save(dataDir)
 			fmt.Fprintf(out, "  %s Returning to Main Menu (progress saved).\n", theme.Green("✓"))
-			return nil
+			return false, nil
+		}
+		if lower == "/train" {
+			_ = b.Save(dataDir)
+			return true, nil
 		}
 
 		if strings.HasPrefix(lower, "/help") || lower == "help" {

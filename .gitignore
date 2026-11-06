@@ -1,7 +1,9 @@
 # Runtime study data & local saves
 matrix_data/
+*.matrix
 
-# Temporary test/dev artifacts
+# Temporary test/dev artifacts & local Linux binary
 *.test
 *.out
+/matrix
 /matrix-linux

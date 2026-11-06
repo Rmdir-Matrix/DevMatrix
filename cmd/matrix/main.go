@@ -21,6 +21,8 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
+const appVersion = "1.0.0"
+
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "Directory for Matrix saves and configuration (default: ./matrix_data)")
 	forceSetup := flag.Bool("setup", false, "Run the interactive RAM & Matrix Name setup wizard on startup")
@@ -30,8 +32,14 @@ func main() {
 	exportName := flag.String("export-name", "", "Custom name to embed when using --export")
 	importPath := flag.String("import", "", "Import a shared .matrix file on startup")
 	showSpecsOnly := flag.Bool("specs", false, "Print detected hardware specs and auto-optimized AI profile, then exit")
+	showVersion := flag.Bool("version", false, "Print Matrix version and exit")
 	noColor := flag.Bool("no-color", false, "Disable ANSI terminal colors")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("Matrix AI Study Buddy CLI v%s\n", appVersion)
+		return
+	}
 
 	colorOK := platform.InitConsole() && !*noColor
 	theme := ui.NewTheme(colorOK)
@@ -117,9 +125,15 @@ func main() {
 	}
 
 	if *autoTrain {
-		_ = trainer.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir, true)
+		toChat, _ := trainer.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir, true)
+		if toChat {
+			_, _ = chat.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir)
+		}
 	} else if *autoChat {
-		_ = chat.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir)
+		toTrain, _ := chat.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir)
+		if toTrain {
+			_, _ = trainer.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir, false)
+		}
 	}
 
 	runMainMenu(reader, os.Stdout, theme, dataDir, hw, cfg, activeBrain, articleReader)
@@ -197,13 +211,9 @@ func runMainMenu(
 
 		switch strings.ToLower(choice) {
 		case "", "1", "t", "train":
-			if err := trainer.RunInteractive(reader, out, theme, activeBrain, articleReader, dataDir, false); err != nil {
-				fmt.Fprintln(out, "  "+theme.Red("Training error: "+err.Error()))
-			}
+			runChainedModes(reader, out, theme, activeBrain, articleReader, dataDir, "train")
 		case "2", "c", "chat":
-			if err := chat.RunInteractive(reader, out, theme, activeBrain, articleReader, dataDir); err != nil {
-				fmt.Fprintln(out, "  "+theme.Red("Chat error: "+err.Error()))
-			}
+			runChainedModes(reader, out, theme, activeBrain, articleReader, dataDir, "chat")
 		case "3", "e", "export", "share":
 			if err := share.RunInteractiveMenu(reader, out, theme, dataDir, &cfg, &activeBrain); err != nil {
 				fmt.Fprintln(out, "  "+theme.Red("Share menu error: "+err.Error()))
@@ -243,6 +253,46 @@ func runMainMenu(
 			return
 		default:
 			fmt.Fprintln(out, "  "+theme.Red("Unknown command. Choose 1, 2, 3, 4, or Q."))
+		}
+	}
+}
+
+func runChainedModes(
+	reader *bufio.Reader,
+	out io.Writer,
+	theme ui.Theme,
+	b *brain.Brain,
+	cr *corpus.Reader,
+	dataDir string,
+	startMode string,
+) {
+	mode := startMode
+	for mode != "" {
+		switch mode {
+		case "train":
+			toChat, err := trainer.RunInteractive(reader, out, theme, b, cr, dataDir, false)
+			if err != nil {
+				fmt.Fprintln(out, "  "+theme.Red("Training error: "+err.Error()))
+				return
+			}
+			if toChat {
+				mode = "chat"
+			} else {
+				mode = ""
+			}
+		case "chat":
+			toTrain, err := chat.RunInteractive(reader, out, theme, b, cr, dataDir)
+			if err != nil {
+				fmt.Fprintln(out, "  "+theme.Red("Chat error: "+err.Error()))
+				return
+			}
+			if toTrain {
+				mode = "train"
+			} else {
+				mode = ""
+			}
+		default:
+			mode = ""
 		}
 	}
 }

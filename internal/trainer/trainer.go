@@ -27,6 +27,7 @@ type Options struct {
 var majorMilestones = []int{1, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500}
 
 // RunInteractive launches Easy Training Mode from the CLI menu.
+// Returns switchToChat=true if the user typed "chat" or "c" while pausing training.
 func RunInteractive(
 	reader *bufio.Reader,
 	out io.Writer,
@@ -35,7 +36,7 @@ func RunInteractive(
 	cr *corpus.Reader,
 	dataDir string,
 	autoStart bool,
-) error {
+) (bool, error) {
 	topic := ""
 	if !autoStart {
 		fmt.Fprintln(out)
@@ -47,7 +48,7 @@ func RunInteractive(
 
 		ans, err := ui.Prompt(reader, out, "  Focus topic (press Enter for Everything / Easy Auto-Study): ")
 		if err != nil && err != io.EOF {
-			return err
+			return false, err
 		}
 		topic = strings.TrimSpace(ans)
 	}
@@ -55,24 +56,37 @@ func RunInteractive(
 	fmt.Fprintln(out)
 	if topic == "" {
 		fmt.Fprintf(out, "  %s %s is powered ON and reading real articles! %s\n\n",
-			theme.BoldGreen("▶"), theme.Bold(b.Name), theme.Yellow("(Press [Enter] anytime to pause & return)"))
+			theme.BoldGreen("▶"), theme.Bold(b.Name),
+			theme.Yellow("(Press [Enter] to pause, or type 'chat' + [Enter] to talk to "+b.Name+")"))
 	} else {
 		fmt.Fprintf(out, "  %s %s is studying %q! %s\n\n",
-			theme.BoldGreen("▶"), theme.Bold(b.Name), topic, theme.Yellow("(Press [Enter] anytime to pause & return)"))
+			theme.BoldGreen("▶"), theme.Bold(b.Name), topic,
+			theme.Yellow("(Press [Enter] to pause, or type 'chat' + [Enter] to talk to "+b.Name+")"))
 	}
 
 	stopCh := make(chan struct{})
+	cmdCh := make(chan string, 1)
 	go func() {
-		_, _ = reader.ReadString('\n')
+		line, _ := reader.ReadString('\n')
+		cmdCh <- strings.ToLower(strings.TrimSpace(line))
 		close(stopCh)
 	}()
 
-	return RunLoop(out, theme, b, cr, Options{
+	err := RunLoop(out, theme, b, cr, Options{
 		TopicFilter: topic,
 		MaxArticles: 0,
 		StepDelay:   380 * time.Millisecond,
 		DataDir:     dataDir,
 	}, stopCh)
+
+	select {
+	case cmd := <-cmdCh:
+		if cmd == "chat" || cmd == "c" || cmd == "2" {
+			return true, err
+		}
+	default:
+	}
+	return false, err
 }
 
 // RunLoop executes the real article-reading and neural training loop until stopped or MaxArticles reached.
