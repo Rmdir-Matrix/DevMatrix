@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -9,7 +10,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Rmdir-Matrix/DevMatrix/internal/brain"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/config"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/corpus"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/platform"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
@@ -60,7 +63,21 @@ func main() {
 	// Enforce strict Go runtime soft memory cap and CPU worker bounds
 	specs.ApplyRuntimeLimits(cfg.Profile)
 
-	runMainMenu(reader, os.Stdout, theme, dataDir, hw, cfg)
+	articleReader, err := corpus.NewReader(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading study corpus: %v\n", err)
+		os.Exit(1)
+	}
+
+	activeBrain, existed, err := brain.LoadOrCreate(dataDir, cfg.ActiveMatrixName, cfg.Profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: starting fresh brain (%v)\n", err)
+		activeBrain = brain.NewBrain(cfg.ActiveMatrixName, cfg.Profile)
+	} else if !existed {
+		_ = activeBrain.Save(dataDir)
+	}
+
+	runMainMenu(reader, os.Stdout, theme, dataDir, hw, cfg, activeBrain, articleReader)
 }
 
 func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) {
@@ -75,56 +92,106 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 		prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
 }
 
-func printStatusBar(out io.Writer, theme ui.Theme, hw specs.HardwareInfo, cfg config.AppConfig) {
+func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, theme.BoldGreen("Matrix Neural Brain & Corpus Status"))
+	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s)\n", theme.Bold(b.Name), b.ID)
+	fmt.Fprintf(out, "  Level & XP      : Level %d (%d XP  •  next level at %d XP)\n",
+		b.Level, b.XP, brain.XPForLevel(b.Level+1))
+	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d vocabulary tokens\n",
+		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.VocabSize(), b.Net.MaxVocab)
+	fmt.Fprintf(out, "  Active Synapses : %d learned neuron connections\n", b.Net.ActiveSynapses())
+	fmt.Fprintf(out, "  Training Stats  : %d articles read • %d tokens trained • smoothed loss: %.4f\n",
+		b.ArticlesRead, b.TokensTrained, b.SmoothedLoss)
+	fmt.Fprintf(out, "  Study Memory    : %d/%d indexed passages\n", len(b.Passages), b.MaxPassages)
+	fmt.Fprintf(out, "  Article Sources : Live Wikipedia API + %d built-in study articles + local notes (%s)\n",
+		cr.SeedCount(), cr.NotesDir())
+	if topics := b.TopTopics(5); len(topics) > 0 {
+		fmt.Fprintf(out, "  Top Topics      : %s\n", strings.Join(topics, ", "))
+	}
+}
+
+func printStatusBar(out io.Writer, theme ui.Theme, cfg config.AppConfig, b *brain.Brain) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	usedMB := float64(mem.Alloc) / (1024.0 * 1024.0)
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %s %s  |  %s %s (%d MB cap, %.1f MB in use)  |  %s %d neurons, %d threads\n",
-		theme.Dim("Buddy:"), theme.BoldGreen(cfg.ActiveMatrixName),
-		theme.Dim("Spec Tier:"), theme.BoldCyan(cfg.Profile.TierName), cfg.Profile.RAMBudgetMB, usedMB,
-		theme.Dim("Brain Spec:"), cfg.Profile.HiddenNeurons, cfg.Profile.WorkerThreads,
+	fmt.Fprintf(out, "  %s %s (Lv.%d)  |  %s %d synapses • %d articles • %d vocab  |  %s %.1f/%d MB (%s)\n",
+		theme.Dim("Buddy:"), theme.BoldGreen(b.Name), b.Level,
+		theme.Dim("Brain:"), b.Net.ActiveSynapses(), b.ArticlesRead, b.Net.VocabSize(),
+		theme.Dim("RAM:"), usedMB, cfg.Profile.RAMBudgetMB, cfg.Profile.TierName,
 	)
-	fmt.Fprintln(out, theme.Dim("  ─────────────────────────────────────────────────────────────────────────"))
+	fmt.Fprintln(out, theme.Dim("  ──────────────────────────────────────────────────────────────────────────────────"))
 }
 
-func runMainMenu(reader *bufio.Reader, out io.Writer, theme ui.Theme, dataDir string, hw specs.HardwareInfo, cfg config.AppConfig) {
+func runMainMenu(
+	reader *bufio.Reader,
+	out io.Writer,
+	theme ui.Theme,
+	dataDir string,
+	hw specs.HardwareInfo,
+	cfg config.AppConfig,
+	activeBrain *brain.Brain,
+	articleReader *corpus.Reader,
+) {
 	for {
-		printStatusBar(out, theme, hw, cfg)
-		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Read real articles & train AI neural connections)"))
-		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk & study with "+cfg.ActiveMatrixName+")"))
-		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export, import, or switch named Matrixes)"))
-		fmt.Fprintf(out, "    %s Setup & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(View hardware diagnostics or change RAM / Name)"))
+		printStatusBar(out, theme, cfg, activeBrain)
+		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Continuous AI article training & level messages — Step 3)"))
+		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk & study with "+activeBrain.Name+" — Step 4)"))
+		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export, import, or switch named Matrixes — Step 4)"))
+		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats, test 1 article step, or change RAM/Name)"))
 		fmt.Fprintf(out, "    %s Quit\n\n", theme.Dim("[Q]"))
 
 		choice, err := ui.Prompt(reader, out, "  Select mode: ")
 		if err != nil {
+			_ = activeBrain.Save(dataDir)
 			fmt.Fprintln(out)
 			return
 		}
 
 		switch strings.ToLower(choice) {
 		case "1", "t", "train":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Training Mode & AI Brain Engine are queued next in Steps 2 & 3!"))
+			fmt.Fprintln(out, "  "+theme.Yellow("→ Continuous Training Mode & Level-Evolving Messages are next in Step 3! (Try [4] to run a single-article neural test pass right now.)"))
 		case "2", "c", "chat":
 			fmt.Fprintln(out, "  "+theme.Yellow("→ Study Buddy Chat Mode is queued in Step 4!"))
 		case "3", "e", "export", "share":
 			fmt.Fprintln(out, "  "+theme.Yellow("→ Matrix Export/Import Sharing is queued in Step 4!"))
-		case "4", "s", "setup", "specs":
+		case "4", "s", "setup", "specs", "brain":
 			printSpecsDiagnostic(out, theme, hw)
-			reCfg, rErr := ui.Prompt(reader, out, "\n  Re-run setup wizard to change Name or RAM limit? [y/N]: ")
-			if rErr == nil && (strings.EqualFold(reCfg, "y") || strings.EqualFold(reCfg, "yes")) {
+			printBrainDiagnostic(out, theme, activeBrain, articleReader)
+
+			sub, sErr := ui.Prompt(reader, out, "\n  Options: [T] Train 1 sample article now  |  [S] Re-run RAM/Name setup  |  [Enter] Back: ")
+			if sErr != nil {
+				continue
+			}
+			switch strings.ToLower(sub) {
+			case "t":
+				fmt.Fprintln(out, "  "+theme.Cyan("Reading real article and running neural backpropagation..."))
+				art, aErr := articleReader.NextArticle(context.Background(), "", activeBrain.SeenSources)
+				if aErr != nil {
+					fmt.Fprintln(out, "  "+theme.Red("Could not read article: "+aErr.Error()))
+					continue
+				}
+				rep := activeBrain.TrainOnArticle(art, 2)
+				_ = activeBrain.Save(dataDir)
+				fmt.Fprintf(out, "  %s Studied %q [%s] (%d tokens) → Loss: %.4f | Synapses: %d | Level: %d (+%d XP)\n",
+					theme.BoldGreen("✓"), rep.ArticleTitle, rep.Topic, rep.TokensRead,
+					rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel, rep.XPGained)
+			case "s":
 				updated, wErr := config.RunSetupWizard(reader, out, theme, hw, cfg)
 				if wErr == nil {
 					cfg = updated
 					_ = config.Save(dataDir, cfg)
 					specs.ApplyRuntimeLimits(cfg.Profile)
+					activeBrain, _, _ = brain.LoadOrCreate(dataDir, cfg.ActiveMatrixName, cfg.Profile)
+					_ = activeBrain.Save(dataDir)
 				}
 			}
 		case "q", "quit", "exit":
-			fmt.Fprintf(out, "\n  %s Powering down %s. See you next study session!\n\n",
-				theme.BoldGreen("⚡"), cfg.ActiveMatrixName)
+			_ = activeBrain.Save(dataDir)
+			fmt.Fprintf(out, "\n  %s Saved & powered down %s. See you next study session!\n\n",
+				theme.BoldGreen("⚡"), activeBrain.Name)
 			return
 		default:
 			fmt.Fprintln(out, "  "+theme.Red("Unknown command. Choose 1, 2, 3, 4, or Q."))

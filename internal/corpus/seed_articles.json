@@ -1,0 +1,140 @@
+[
+  {
+    "title": "Artificial Neural Networks and Synaptic Learning",
+    "topic": "Artificial Intelligence",
+    "source": "embedded:encyclopedia/ai-neural-networks",
+    "content": "Artificial neural networks are computational models inspired by biological brains. A biological brain contains billions of neurons connected by synapses that strengthen or weaken as an organism learns new patterns. In an artificial neural network, neurons are represented as mathematical nodes arranged in layers: an input layer, one or more hidden layers, and an output layer.\n\nEach connection between neurons has a numerical weight. During forward propagation, input tokens or features are converted into dense vectors called embeddings, multiplied by weight matrices, shifted by bias terms, and passed through nonlinear activation functions such as hyperbolic tangent or rectified linear units. Without nonlinear activations, stacking multiple layers would collapse into a single linear transformation.\n\nLearning occurs through backpropagation and gradient descent. When the network predicts the next word in an article, a loss function such as cross-entropy measures how far the prediction was from the actual word. Backpropagation applies the chain rule of calculus to compute how each synaptic weight contributed to the error, nudging weights to reduce future loss and form stronger neural pathways."
+  },
+  {
+    "title": "The Science of Effective Studying: Active Recall and Spaced Repetition",
+    "topic": "Study Skills",
+    "source": "embedded:encyclopedia/study-science",
+    "content": "Cognitive psychology research shows that passive re-reading and highlighting are among the least efficient ways to study. Two of the highest-impact learning methods ever measured are active recall and spaced repetition. Active recall means closing your notes and testing yourself by retrieving concepts from memory, which forces the brain to reconstruct neural pathways rather than merely recognizing familiar text.\n\nSpaced repetition schedules review sessions at expanding intervals—such as one day, three days, one week, and one month—right before the forgetting curve would erase the memory. Hermann Ebbinghaus first mapped the forgetting curve in the nineteenth century, demonstrating that memory decays exponentially unless interrupted by timely retrieval.\n\nAnother powerful method is the Feynman Technique: explain a complex concept in plain, everyday words as if teaching a beginner. Whenever your explanation stalls or relies on jargon you cannot define, you have pinpointed a gap in understanding and can return to the source material to master it."
+  },
+  {
+    "title": "Cellular Respiration and ATP Energy Production",
+    "topic": "Biology",
+    "source": "embedded:encyclopedia/cellular-respiration",
+    "content": "Cellular respiration is the metabolic pathway by which living cells harvest chemical energy from glucose and convert it into adenosine triphosphate, abbreviated ATP. ATP acts as the universal energy currency of the cell, powering muscle contraction, active transport across membranes, and macromolecule synthesis.\n\nAerobic respiration unfolds across three main stages: glycolysis in the cytoplasm, the citric acid cycle (also called the Krebs cycle) inside the mitochondrial matrix, and oxidative phosphorylation along the inner mitochondrial membrane. Glycolysis splits one six-carbon glucose molecule into two three-carbon pyruvate molecules, yielding a net gain of two ATP and two NADH electron carriers.\n\nInside the mitochondria, pyruvate is oxidized to acetyl-CoA and enters the citric acid cycle, releasing carbon dioxide and loading high-energy electrons onto NADH and FADH2. Finally, the electron transport chain pumps protons across the inner membrane, driving ATP synthase like a molecular turbine to generate roughly thirty to thirty-two ATP molecules per glucose."
+  },
+  {
+    "title": "Photosynthesis and the Global Carbon Cycle",
+    "topic": "Biology",
+    "source": "embedded:encyclopedia/photosynthesis",
+    "content": "Photosynthesis is the biochemical process used by plants, algae, and cyanobacteria to capture solar energy and store it in the chemical bonds of sugars. Taking place primarily inside chloroplasts, photosynthesis uses chlorophyll pigments to absorb blue and red wavelengths of sunlight while reflecting green light.\n\nThe process consists of two linked stages: light-dependent reactions in the thylakoid membranes and the Calvin cycle in the stroma. In the light-dependent reactions, photons excite electrons in photosystem II, splitting water molecules into oxygen gas, protons, and electrons. This electron flow generates ATP and NADPH.\n\nDuring the Calvin cycle, the enzyme RuBisCO fixes atmospheric carbon dioxide into organic three-carbon sugars using the ATP and NADPH produced by light reactions. Together, photosynthesis and cellular respiration form a complementary biological cycle that sustains Earth's oxygen atmosphere and food webs."
+  },
+  {
+    "title": "Classical Mechanics and Newton's Laws of Motion",
+    "topic": "Physics",
+    "source": "embedded:encyclopedia/newtons-laws",
+    "content": "Classical mechanics describes the motion of macroscopic objects from projectiles to planets. Published by Isaac Newton in 1687 in the Principia Mathematica, Newton's three laws of motion laid the mathematical foundation for physics and engineering.\n\nNewton's First Law, the law of inertia, states that an object remains at rest or continues moving at constant velocity in a straight line unless acted upon by a net external force. Newton's Second Law quantifies force as the rate of change of momentum, commonly written as F equals m times a, meaning acceleration is directly proportional to net force and inversely proportional to mass.\n\nNewton's Third Law states that for every action force there is an equal and opposite reaction force: when a rocket expels exhaust gas downward, the gas pushes the rocket upward with equal magnitude. Combined with Newton's Law of Universal Gravitation, these principles explain orbital mechanics, tides, and structural equilibrium."
+  },
+  {
+    "title": "Thermodynamics, Entropy, and Energy Conservation",
+    "topic": "Physics",
+    "source": "embedded:encyclopedia/thermodynamics",
+    "content": "Thermodynamics studies heat, work, temperature, and energy transformations in physical systems. The Zeroth Law defines thermal equilibrium and makes temperature measurement consistent. The First Law of Thermodynamics expresses conservation of energy: energy can neither be created nor destroyed, only converted from one form to another, so the change in internal energy equals heat added minus work done by the system.\n\nThe Second Law of Thermodynamics introduces entropy, a measure of microscopic disorder or the number of accessible microstates in a system. In any spontaneous process within an isolated system, total entropy either increases or remains constant; heat never flows spontaneously from a colder body to a hotter body without external work.\n\nThe Third Law states that as the temperature of a perfect crystal approaches absolute zero (zero Kelvin), its entropy approaches a constant minimum. Thermodynamic principles govern steam turbines, refrigerators, chemical reactions, and even black hole physics."
+  },
+  {
+    "title": "Quantum Mechanics: Wave-Particle Duality and Superposition",
+    "topic": "Physics",
+    "source": "embedded:encyclopedia/quantum-mechanics",
+    "content": "Quantum mechanics governs the behavior of matter and light at atomic and subatomic scales, where classical physics breaks down. At the start of the twentieth century, Max Planck and Albert Einstein showed that electromagnetic energy is quantized into discrete packets called photons, explaining blackbody radiation and the photoelectric effect.\n\nLouis de Broglie proposed that particles such as electrons also exhibit wave properties, a phenomenon known as wave-particle duality. Erwin Schrodinger formulated the wave equation describing how a quantum state's probability amplitude evolves over time, while Werner Heisenberg proved the Uncertainty Principle: one cannot simultaneously know both the exact position and exact momentum of a particle with arbitrary precision.\n\nBefore measurement, a quantum system can exist in a linear superposition of multiple eigenstates. Quantum tunneling, entanglement, and discrete atomic orbitals underpin modern semiconductors, lasers, MRI scanners, and quantum computers."
+  },
+  {
+    "title": "Calculus: Limits, Derivatives, and Integrals",
+    "topic": "Mathematics",
+    "source": "embedded:encyclopedia/calculus",
+    "content": "Calculus is the mathematical study of continuous change, developed independently in the seventeenth century by Isaac Newton and Gottfried Wilhelm Leibniz. It rests on the concept of a limit, which describes the value a function approaches as its input gets arbitrarily close to a point.\n\nDifferential calculus measures instantaneous rates of change. The derivative of a function at a point equals the slope of the tangent line to its graph. In physics, velocity is the derivative of position with respect to time, and acceleration is the derivative of velocity. In machine learning, partial derivatives form gradients used to optimize neural network weights.\n\nIntegral calculus solves the inverse problem: accumulating infinitely many infinitesimal quantities to compute areas under curves, volumes, and total displacement. The Fundamental Theorem of Calculus unites differentiation and integration, proving that taking an integral and taking a derivative are inverse operations."
+  },
+  {
+    "title": "Linear Algebra: Vectors, Matrices, and Eigenvalues",
+    "topic": "Mathematics",
+    "source": "embedded:encyclopedia/linear-algebra",
+    "content": "Linear algebra is the branch of mathematics concerning vectors, vector spaces, and linear transformations represented by matrices. A vector is an ordered list of numbers representing magnitude and direction in multidimensional space, while a matrix is a rectangular array of numbers that transforms vectors via rotation, scaling, projection, or shear.\n\nMatrix multiplication composes linear transformations: multiplying an m-by-n matrix by an n-by-p matrix produces an m-by-p matrix. Although matrix multiplication is associative and distributive, it is generally not commutative, meaning A times B does not necessarily equal B times A.\n\nEigenvectors of a square matrix are special nonzero vectors whose direction remains unchanged after transformation, scaled only by a scalar factor called the eigenvalue. Linear algebra serves as the backbone of 3D computer graphics, quantum state mechanics, search engine page ranking, principal component analysis, and deep neural networks."
+  },
+  {
+    "title": "Probability Theory and Bayes' Theorem",
+    "topic": "Mathematics",
+    "source": "embedded:encyclopedia/probability-bayes",
+    "content": "Probability theory provides a rigorous framework for reasoning under uncertainty. Every random experiment has a sample space of all possible outcomes, and probabilities assign numbers between zero and one to events such that the total probability across mutually exclusive exhaustive outcomes equals one.\n\nConditional probability measures the likelihood of event A given that event B has already occurred. Reverend Thomas Bayes formulated a relationship now known as Bayes' Theorem: the posterior probability of a hypothesis given observed evidence equals the likelihood of the evidence given the hypothesis multiplied by the prior probability of the hypothesis, divided by the marginal probability of the evidence.\n\nBayesian updating allows scientists, medical diagnostics, spam filters, and artificial intelligence systems to revise their beliefs systematically whenever new data arrives. Together with the Law of Large Numbers and the Central Limit Theorem, probability forms the foundation of modern statistics and language modeling."
+  },
+  {
+    "title": "Data Structures and Algorithmic Complexity",
+    "topic": "Computer Science",
+    "source": "embedded:encyclopedia/data-structures-algorithms",
+    "content": "In computer science, data structures organize information in memory so algorithms can access and modify it efficiently. Algorithmic efficiency is measured using Big-O notation, which describes how runtime or memory usage scales as input size n grows.\n\nArrays store elements contiguously in memory, offering constant-time O(1) random access by index, though inserting in the middle costs O(n). Linked lists chain nodes via pointers, enabling fast local insertions but O(n) search. Hash tables use a hash function to map keys into buckets, achieving average O(1) lookup, insertion, and deletion.\n\nBalanced binary search trees and B-trees maintain sorted order with O(log n) operations, making them vital for databases and filesystems. Heaps implement priority queues in O(log n) time, powering Dijkstra's shortest-path algorithm, while graphs model networks of vertices and edges traversed via breadth-first search or depth-first search."
+  },
+  {
+    "title": "Operating Systems, Virtual Memory, and CPU Scheduling",
+    "topic": "Computer Science",
+    "source": "embedded:encyclopedia/operating-systems",
+    "content": "An operating system manages hardware resources—CPU cores, RAM, storage disks, and network interfaces—and provides safe abstractions for applications. Two central abstractions are processes and virtual memory. A process is an isolated running program with its own address space, file descriptors, and execution threads.\n\nVirtual memory uses hardware page tables and the Translation Lookaside Buffer (TLB) to map virtual addresses used by programs onto physical RAM frames. This prevents one program from corrupting another program's memory and allows systems to manage RAM budgets cleanly.\n\nMeanwhile, the kernel scheduler multiplexes threads across physical CPU cores using preemptive time-slicing and priority queues so interactive tasks stay responsive even while background computations run. Synchronization primitives such as mutexes, channels, and atomic instructions prevent race conditions when concurrent threads coordinate."
+  },
+  {
+    "title": "Computer Networking: TCP/IP, DNS, and HTTPS",
+    "topic": "Computer Science",
+    "source": "embedded:encyclopedia/computer-networking",
+    "content": "Modern internet communication relies on a layered protocol stack known as TCP/IP. At the network layer, the Internet Protocol (IP) routes packets across interconnected routers from source to destination IP addresses on a best-effort basis.\n\nAt the transport layer, the Transmission Control Protocol (TCP) establishes a reliable connection via a three-way handshake (SYN, SYN-ACK, ACK), numbers byte streams, retransmits lost packets, and performs congestion control. For low-latency applications like DNS lookups or real-time media, the User Datagram Protocol (UDP) sends lightweight connectionless datagrams.\n\nBefore fetching a web article, a client queries the Domain Name System (DNS) to translate a human-readable hostname into an IP address. HTTPS wraps HTTP inside Transport Layer Security (TLS), using asymmetric public-key cryptography to verify server certificates and negotiate fast symmetric session keys that keep data private and tamper-proof."
+  },
+  {
+    "title": "Genetics, DNA Replication, and Protein Synthesis",
+    "topic": "Biology",
+    "source": "embedded:encyclopedia/dna-genetics",
+    "content": "Deoxyribonucleic acid (DNA) carries the hereditary instructions of all cellular organisms. Discovered to be a double helix by Rosalind Franklin's X-ray diffraction work alongside James Watson and Francis Crick's structural model, DNA consists of two antiparallel sugar-phosphate backbones linked by complementary nitrogenous base pairs: adenine pairs with thymine, and cytosine pairs with guanine.\n\nBefore a cell divides, DNA helicase unwinds the double helix and DNA polymerase synthesizes new complementary strands in a semiconservative replication process with proofreading enzymes keeping mutation rates remarkably low.\n\nThe Central Dogma of molecular biology describes how genetic information flows from DNA to RNA to protein. During transcription, RNA polymerase copies a gene into messenger RNA (mRNA). During translation at the ribosome, transfer RNA molecules read mRNA nucleotides in three-letter codons to assemble amino acids into folded functional proteins."
+  },
+  {
+    "title": "Neuroscience of Memory, Synaptic Plasticity, and Sleep",
+    "topic": "Neuroscience",
+    "source": "embedded:encyclopedia/neuroscience-memory",
+    "content": "Human learning depends on neuroplasticity—the brain's ability to reorganize neural circuits in response to experience. Canadian psychologist Donald Hebb summarized synaptic plasticity with a famous principle: neurons that fire together wire together. At the cellular level, Long-Term Potentiation (LTP) strengthens glutamatergic synapses in the hippocampus and neocortex when presynaptic and postsynaptic neurons activate repeatedly in close succession.\n\nWorking memory in the prefrontal cortex can hold only a handful of chunks at once, whereas long-term declarative memory has vast capacity. The hippocampus acts as a fast indexing hub for newly learned facts and episodes.\n\nDuring deep slow-wave sleep and rapid eye movement (REM) sleep, the brain replays daytime neural firing sequences, transferring fragile hippocampal traces into stable neocortical networks—a process called systems consolidation. Getting sufficient sleep after studying dramatically improves problem-solving and long-term retention."
+  },
+  {
+    "title": "Atomic Structure, Periodic Trends, and Chemical Bonding",
+    "topic": "Chemistry",
+    "source": "embedded:encyclopedia/chemistry-bonding",
+    "content": "Every atom consists of a dense nucleus of positively charged protons and neutral neutrons surrounded by negatively charged electrons occupying quantum orbitals. An element's atomic number equals its proton count, while isotopes of the same element differ in neutron count.\n\nDmitri Mendeleev organized elements into the Periodic Table so elements in the same vertical group share valence electron configurations and similar chemical reactivity. Across a period from left to right, effective nuclear charge rises, pulling electron shells closer and increasing electronegativity and ionization energy.\n\nAtoms form chemical bonds to achieve stable outer valence shells. Ionic bonds arise when metals transfer electrons to nonmetals, creating electrostatic attraction between cations and anions. Covalent bonds form when nonmetals share electron pairs, and polar covalent differences give water its hydrogen-bonding network and remarkable solvent properties."
+  },
+  {
+    "title": "World History: The Printing Press, Scientific Revolution, and Enlightenment",
+    "topic": "History",
+    "source": "embedded:encyclopedia/scientific-revolution",
+    "content": "Around 1440, Johannes Gutenberg introduced movable metal type printing in Europe, drastically lowering the cost of books and accelerating literacy and scholarly debate. Within decades, millions of printed volumes circulated across cities and universities, preserving experiments and allowing researchers to compare observations rapidly.\n\nThis information boom catalyzed the Scientific Revolution of the sixteenth and seventeenth centuries. Nicolaus Copernicus proposed a heliocentric solar system, Galileo Galilei turned telescopes toward Jupiter's moons and tested kinematics experimentally, Johannes Kepler derived elliptical planetary laws, and Francis Bacon championed empirical inductive reasoning.\n\nIn the eighteenth century, Enlightenment thinkers applied rational inquiry to governance, economics, and human rights, arguing for constitutional law, freedom of speech, and public education—institutions that shaped modern scientific societies."
+  },
+  {
+    "title": "Ancient Civilizations and the Invention of Writing Systems",
+    "topic": "History",
+    "source": "embedded:encyclopedia/ancient-writing",
+    "content": "Early agrarian civilizations emerged independently along fertile river valleys: Mesopotamia between the Tigris and Euphrates, Ancient Egypt along the Nile, the Indus Valley civilization, and early dynasties along China's Yellow River. Surplus grain harvests supported specialized artisans, astronomers, mathematicians, and administrators.\n\nTo track grain harvests, trade contracts, and laws such as the Code of Hammurabi, Sumerian scribes developed cuneiform around 3200 BCE by pressing wedge-shaped reed styluses into clay tablets. Egyptians developed hieroglyphics and papyrus scrolls, while Phoenician maritime traders later created a compact consonantal alphabet.\n\nWriting transformed human cognition by creating external memory: knowledge no longer vanished when an elder died, allowing mathematics, astronomy, medicine, and literature like the Epic of Gilgamesh to accumulate across generations."
+  },
+  {
+    "title": "Philosophy: Epistemology, Logic, and Critical Thinking",
+    "topic": "Philosophy",
+    "source": "embedded:encyclopedia/epistemology-logic",
+    "content": "Epistemology is the branch of philosophy that investigates the nature, sources, and limits of knowledge—asking what distinguishes justified true belief from mere opinion or lucky guesswork. Rationalists such as Rene Descartes emphasized deductive reasoning from foundational axioms, whereas empiricists such as John Locke and David Hume argued that knowledge originates in sensory observation.\n\nFormal logic studies valid inference rules. In a deductively valid argument, such as modus ponens (if P implies Q, and P is true, then Q must be true), true premises guarantee a true conclusion. Inductive reasoning generalizes probable patterns from finite observations, while abductive reasoning infers the simplest best explanation.\n\nCritical thinking combines logic with awareness of cognitive biases like confirmation bias, survivorship bias, and false causality, helping students evaluate evidence rigorously."
+  },
+  {
+    "title": "Astronomy: Stellar Evolution, Black Holes, and Cosmology",
+    "topic": "Astronomy",
+    "source": "embedded:encyclopedia/stellar-evolution",
+    "content": "Stars are born inside cold giant molecular clouds when gravitational collapse heats dense protostellar cores until hydrogen nuclei fuse into helium, releasing immense energy via Einstein's mass-energy equivalence E equals m c squared. Outward radiation pressure balances inward gravity across millions or billions of years on the main sequence.\n\nLow- and medium-mass stars like our Sun eventually expand into red giants, shed outer planetary nebulae, and leave behind dense Earth-sized white dwarfs supported by electron degeneracy pressure. Massive stars fuse heavier elements up to iron before collapsing in core-collapse supernovae that seed galaxies with carbon, oxygen, silicon, and heavy metals.\n\nThe remnants of massive stars become either ultra-dense neutron stars or black holes—regions of spacetime curved so intensely that nothing, not even light, can escape inside the event horizon."
+  },
+  {
+    "title": "Economics: Supply, Demand, Opportunity Cost, and Comparative Advantage",
+    "topic": "Economics",
+    "source": "embedded:encyclopedia/economics-fundamentals",
+    "content": "Economics analyzes how individuals and societies allocate scarce resources among competing uses. Every choice carries an opportunity cost—the value of the next best alternative foregone when making a decision, such as choosing how to spend an hour of study time.\n\nIn competitive markets, prices coordinate behavior through supply and demand. The law of demand states that, holding other factors constant, consumers buy less of a good when its price rises, while suppliers produce more at higher prices; market equilibrium occurs where quantity supplied equals quantity demanded.\n\nDavid Ricardo demonstrated the principle of comparative advantage: two individuals or nations can both gain from specialization and trade even if one is more productive at everything in absolute terms, provided each specializes where its relative opportunity cost is lowest."
+  },
+  {
+    "title": "Natural Language Processing, Tokenization, and Embeddings",
+    "topic": "Artificial Intelligence",
+    "source": "embedded:encyclopedia/nlp-embeddings",
+    "content": "Natural Language Processing enables computers to read, represent, and generate human language. Because neural networks operate on numbers rather than raw letters, text first passes through tokenization, which segments sentences into words or subword units and maps each token to an integer index in a vocabulary.\n\nEarly language models counted n-gram frequencies—estimating how often one word follows a short sequence of previous words—but struggled with unseen combinations. Neural language models overcame this sparsity by mapping tokens into continuous dense vector spaces called word embeddings.\n\nAs the model trains on real articles, words that appear in similar contexts—such as neuron and synapse, or derivative and integral—converge toward nearby coordinates in embedding space, allowing the model to generalize meaning across related concepts."
+  },
+  {
+    "title": "Study Buddy Conversational Guide and Collaborative Learning",
+    "topic": "Study Skills",
+    "source": "embedded:encyclopedia/study-buddy-dialogue",
+    "content": "Hello! I am your AI study buddy, and we learn best when we explore ideas together. Whenever I read articles during training mode, I build stronger neural representations and store key concepts so we can review them in chat mode.\n\nYou can ask me questions about computer science, mathematics, biology, physics, chemistry, astronomy, history, philosophy, economics, or any new articles I read online and from your local study notes. Studying with a partner works because explaining ideas aloud, asking why and how, and testing recall with quick quizzes turns passive reading into deep understanding.\n\nIf a topic feels overwhelming, break it into small fundamentals, connect each new concept to an analogy you already know, and take short focused study sprints followed by brief rest so your brain consolidates new synaptic connections."
+  }
+]
