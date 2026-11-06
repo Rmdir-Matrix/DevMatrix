@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/Rmdir-Matrix/DevMatrix/internal/brain"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/chat"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/config"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/corpus"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/platform"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/share"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/trainer"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
@@ -22,7 +24,11 @@ import (
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "Directory for Matrix saves and configuration (default: ./matrix_data)")
 	forceSetup := flag.Bool("setup", false, "Run the interactive RAM & Matrix Name setup wizard on startup")
-	autoTrain := flag.Bool("train", false, "Immediately start reading articles and training on startup")
+	autoTrain := flag.Bool("train", false, "Immediately start Mode 1 (AI Article Training) on startup")
+	autoChat := flag.Bool("chat", false, "Immediately start Mode 2 (Study Buddy Chat) on startup")
+	exportPath := flag.String("export", "", "Export active Matrix to a shareable .matrix file and exit")
+	exportName := flag.String("export-name", "", "Custom name to embed when using --export")
+	importPath := flag.String("import", "", "Import a shared .matrix file on startup")
 	showSpecsOnly := flag.Bool("specs", false, "Print detected hardware specs and auto-optimized AI profile, then exit")
 	noColor := flag.Bool("no-color", false, "Disable ANSI terminal colors")
 	flag.Parse()
@@ -45,6 +51,22 @@ func main() {
 	cfg, setupDone, err := config.Load(dataDir, hw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not read existing config (%v); starting setup.\n", err)
+	}
+
+	// Non-interactive CLI --export shortcut
+	if strings.TrimSpace(*exportPath) != "" {
+		b, _, lErr := brain.LoadOrCreate(dataDir, cfg.ActiveMatrixName, cfg.Profile)
+		if lErr != nil {
+			fmt.Fprintf(os.Stderr, "Error loading Matrix: %v\n", lErr)
+			os.Exit(1)
+		}
+		saved, sz, exErr := share.ExportMatrix(b, *exportName, *exportPath)
+		if exErr != nil {
+			fmt.Fprintf(os.Stderr, "Export error: %v\n", exErr)
+			os.Exit(1)
+		}
+		fmt.Printf("Exported %s (Lv.%d) -> %s (%.1f KB)\n", b.Name, b.Level, saved, float64(sz)/1024.0)
+		return
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -71,16 +93,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	activeBrain, existed, err := brain.LoadOrCreate(dataDir, cfg.ActiveMatrixName, cfg.Profile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: starting fresh brain (%v)\n", err)
-		activeBrain = brain.NewBrain(cfg.ActiveMatrixName, cfg.Profile)
-	} else if !existed {
-		_ = activeBrain.Save(dataDir)
+	var activeBrain *brain.Brain
+	if strings.TrimSpace(*importPath) != "" {
+		imp, sum, imErr := share.ImportMatrix(*importPath, dataDir, cfg.Profile)
+		if imErr != nil {
+			fmt.Fprintf(os.Stderr, "Import error: %v\n", imErr)
+			os.Exit(1)
+		}
+		activeBrain = imp
+		cfg.ActiveMatrixName = imp.Name
+		_ = config.Save(dataDir, cfg)
+		fmt.Printf("  %s Imported shared Matrix %q (Level %d • %d articles)!\n",
+			theme.BoldGreen("✓"), sum.ExportedName, imp.Level, imp.ArticlesRead)
+	} else {
+		var existed bool
+		activeBrain, existed, err = brain.LoadOrCreate(dataDir, cfg.ActiveMatrixName, cfg.Profile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: starting fresh brain (%v)\n", err)
+			activeBrain = brain.NewBrain(cfg.ActiveMatrixName, cfg.Profile)
+		} else if !existed {
+			_ = activeBrain.Save(dataDir)
+		}
 	}
 
 	if *autoTrain {
 		_ = trainer.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir, true)
+	} else if *autoChat {
+		_ = chat.RunInteractive(reader, os.Stdout, theme, activeBrain, articleReader, dataDir)
 	}
 
 	runMainMenu(reader, os.Stdout, theme, dataDir, hw, cfg, activeBrain, articleReader)
@@ -144,8 +183,8 @@ func runMainMenu(
 	for {
 		printStatusBar(out, theme, cfg, activeBrain)
 		fmt.Fprintf(out, "    %s Training Mode %s\n", theme.BoldGreen("[1]"), theme.Dim("(Easy AI article training — press Enter to start!)"))
-		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk & study with "+activeBrain.Name+" — Step 4)"))
-		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export, import, or switch named Matrixes — Step 4)"))
+		fmt.Fprintf(out, "    %s Chat Mode     %s\n", theme.BoldCyan("[2]"), theme.Dim("(Talk, study & quiz with "+activeBrain.Name+")"))
+		fmt.Fprintf(out, "    %s Share / Export%s\n", theme.Magenta("[3]"), theme.Dim("(Export name, share .matrix files, or switch Matrixes)"))
 		fmt.Fprintf(out, "    %s Brain & Specs %s\n", theme.Yellow("[4]"), theme.Dim("(Inspect neural stats or change RAM / Name)"))
 		fmt.Fprintf(out, "    %s Quit\n\n", theme.Dim("[Q]"))
 
@@ -162,9 +201,13 @@ func runMainMenu(
 				fmt.Fprintln(out, "  "+theme.Red("Training error: "+err.Error()))
 			}
 		case "2", "c", "chat":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Study Buddy Chat Mode is next in Step 4!"))
+			if err := chat.RunInteractive(reader, out, theme, activeBrain, articleReader, dataDir); err != nil {
+				fmt.Fprintln(out, "  "+theme.Red("Chat error: "+err.Error()))
+			}
 		case "3", "e", "export", "share":
-			fmt.Fprintln(out, "  "+theme.Yellow("→ Matrix Export/Import Sharing is next in Step 4!"))
+			if err := share.RunInteractiveMenu(reader, out, theme, dataDir, &cfg, &activeBrain); err != nil {
+				fmt.Fprintln(out, "  "+theme.Red("Share menu error: "+err.Error()))
+			}
 		case "4", "s", "setup", "specs", "brain":
 			printSpecsDiagnostic(out, theme, hw)
 			printBrainDiagnostic(out, theme, activeBrain, articleReader)
