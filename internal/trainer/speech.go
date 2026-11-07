@@ -24,8 +24,8 @@ func IntelligenceStage(level int, dictsDone, dictsTotal, grammarDone, grammarTot
 	}
 }
 
-// GenerateTrainingThought decodes a live status reflection directly from Matrix's trained
-// neural language model (zero hardcoded thought strings).
-func GenerateTrainingThought(b *brain.Brain, rep brain.TrainStepReport) string {
-	return b.GenerateModelThought(rep.SampleKeywords)
+// GenerateTrainingThought decodes a live status reflection 100% from Matrix's
+// Causal Self-Attention + GRU neural weights (zero hardcoded thought strings or templates).
+func GenerateTrainingThought(b *brain.Brain, rep brain.TrainReport) string {
+	return b.GenerateThoughtFromWeights(rep.ArticleTitle, rep.ArticleExcerpt)
 }

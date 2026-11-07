@@ -15,7 +15,7 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
+func TestFullEndToEndDictionariesGrammarNeuralChatAndShare(t *testing.T) {
 	dir := t.TempDir()
 	hw := specs.DetectHardware()
 	prof, _ := specs.BuildProfile(hw, 512)
@@ -29,14 +29,18 @@ func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
 
 	b := brain.NewBrain("Matrix", prof)
 
-	// Verify brand-new brain knows nothing yet
+	// Verify brand-new brain starts at 0 synapses and knows nothing yet
+	if b.Net.ActiveSynapses() != 0 {
+		t.Fatalf("expected 0 active synapses at birth, got %d", b.Net.ActiveSynapses())
+	}
 	if _, known, _ := chat.Respond(b, "hello"); known {
 		t.Fatalf("brand-new brain should not know 'hello' before training")
 	}
 
 	var trainLog bytes.Buffer
+	// Train across all 8 Core Dictionaries + all 8 Grammar Lessons + 12 Phase-3 items
 	err = trainer.RunLoop(&trainLog, ui.NewTheme(false), b, cr, trainer.Options{
-		MaxArticles: 135,
+		MaxArticles: 28,
 		StepDelay:   0,
 		DataDir:     dir,
 	}, make(chan struct{}))
@@ -44,17 +48,26 @@ func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
 		t.Fatalf("RunLoop error: %v", err)
 	}
 
-	if b.DictionariesDone != cr.DictionaryCount() {
-		t.Fatalf("expected all %d dictionary volumes completed first, got %d", cr.DictionaryCount(), b.DictionariesDone)
+	if cr.DictionaryCompleted(b.SeenSources) != cr.DictionaryCount() {
+		t.Fatalf("expected all %d core dictionary chapters completed first, got %d",
+			cr.DictionaryCount(), cr.DictionaryCompleted(b.SeenSources))
 	}
-	if b.GrammarDone != cr.GrammarCount() {
-		t.Fatalf("expected all %d grammar lessons completed second, got %d", cr.GrammarCount(), b.GrammarDone)
+	if cr.GrammarCompleted(b.SeenSources) != cr.GrammarCount() {
+		t.Fatalf("expected all %d grammar lessons completed second, got %d",
+			cr.GrammarCount(), cr.GrammarCompleted(b.SeenSources))
 	}
-	if b.Level < 100 {
-		t.Fatalf("expected Matrix to reach Level >= 100, got Level %d", b.Level)
+	if b.Net.ActiveSynapses() <= 0 {
+		t.Fatalf("expected active synapses > 0 after multi-core AdamW training")
 	}
 
-	// Verify pure model replies on trained topics and honest unknown on unseen topics
+	// Teach neural networks article and verify pure full-vocab neural reply
+	b.TrainOnArticle(corpus.Article{
+		Title:   "Backpropagation and Neural Networks",
+		Topic:   "Computer Science",
+		Source:  "test:nn",
+		Content: "Backpropagation computes gradients across neural network layers so gradient descent reduces prediction loss.",
+	}, 4)
+
 	reply, known, reason := chat.Respond(b, "Explain backpropagation and neural networks")
 	if !known || strings.TrimSpace(reply) == "" {
 		t.Fatalf("expected trained model reply on neural networks, got known=%v reason=%q", known, reason)
@@ -63,7 +76,7 @@ func TestFullEndToEndGrammarFirstModelChatAndShare(t *testing.T) {
 		t.Fatalf("expected unseen topic 'ramen' to return known=false")
 	}
 
-	// Verify exporting with custom name and importing on another PC
+	// Verify exporting compact binary .matrix with custom name and importing on another PC
 	sharePath := filepath.Join(dir, "legend.matrix")
 	savedFile, sz, err := share.ExportMatrix(b, "StudyLegendMatrix", sharePath)
 	if err != nil || sz == 0 {

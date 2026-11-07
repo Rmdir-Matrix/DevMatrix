@@ -1,6 +1,6 @@
 # Matrix — On-Device AI Study Buddy CLI
 
-**Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). A brand-new Matrix starts with **0 words** and **zero hardcoded answers**: when you turn it on, it first learns **foundational English words and grammar**, then reads **real articles** (live Wikipedia articles, your own `.txt`/`.md` study notes, and a built-in 23-article study encyclopedia), training an on-device positional neural language model via backpropagation and decoding all responses word-by-word from its trained model.
+**Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). A brand-new Matrix starts at **0 words** and **0 active synapses** with **zero hardcoded answers**: when you turn it on, it trains an on-device **Causal Self-Attention + GRU + Differentiable Pointer-Generator neural language model** via multi-threaded **AdamW backpropagation through time (BPTT)** — learning **dictionaries first**, then **English grammar**, and then **real multi-source articles**.
 
 ---
 
@@ -24,41 +24,45 @@ Useful startup flags:
 
 ---
 
-## Key Features
+## Architecture & Key Features
 
-### 1. Automatic Hardware Detection & Safe RAM Setup
+### 1. Real Sequence Neural Architecture & Multi-Core AdamW
+- **Causal Scaled Dot-Product Self-Attention + GRU + Pointer-Generator Copy-Attention**: Decodes autoregressively across the **entire learned vocabulary** via Top-K / Top-P nucleus sampling (zero n-gram lookup tables, zero hardcoded reply maps, zero `fmt.Sprintf` thought templates).
+- **Subword Morpheme / WordPiece Tokenization**: Shares root representations across inflected forms (`learn`, `learning`, `learned`) and detects out-of-vocabulary words + high neural perplexity without any hardcoded conversational word list.
+- **Multi-Goroutine Mini-Batch AdamW + Experience Replay**: Scales `BatchSize` and `WorkerThreads` directly to your hardware profile while tracking genuinely gradient-updated synaptic weights (`0` at birth).
+
+### 2. Automatic Hardware Detection & Safe RAM Caps
 On first launch, Matrix probes your system's **Total RAM**, **Available Free RAM**, and **CPU Cores** (`GlobalMemoryStatusEx` on Windows, `/proc/meminfo` + cgroups on Linux) and lets you choose:
 - **`[1] Auto-Optimize`** *(Recommended)* — safely allocates ~15–20% of free RAM so Matrix never overwhelms your PC.
 - **`[2] Enter PC Total RAM`** — calculates a safe budget from your entered RAM.
-- **`[3] Set Exact Max RAM Cap`** — e.g. `256MB`, `512MB`, `1024MB`, `2GB` (guarded so it can never exceed 75% of physical RAM).
+- **`[3] Set Exact Max RAM Cap`** — e.g. `256MB`, `512MB`, `1024MB`, `2GB` (clamped safely below 75% of physical RAM).
 
-Your chosen budget is enforced in the Go runtime (`debug.SetMemoryLimit` + `GOMAXPROCS`) and scales neural network dimensions (`Featherweight` → `Lite` → `Balanced` → `Performance` → `Ultra`).
+Your chosen budget enforces Go runtime limits (`debug.SetMemoryLimit` + `GOMAXPROCS`), LRU-evicting study memory caps, and neural tensor dimensions (`Featherweight` → `Lite` → `Balanced` → `Performance` → `Ultra`).
 
-### 2. Mode 1 — Dictionaries First → Grammar → Real Articles Training
+### 3. Mode 1 — Dictionaries First → Grammar → Multi-Source Real Articles
 Press **`Enter`** (or **`1`**) from the Main Menu to turn Matrix ON:
-- **Phase 1 — Core English Dictionaries (`12 sequential volumes`, `[DICT]`)**: A brand-new Matrix starts with **0 words** and trains on dictionaries **first** — learning headwords, parts of speech (`noun`, `verb`, `adjective`, `adverb`, `pronoun`, `preposition`, `conjunction`), word definitions, and usage examples.
-- **Phase 2 — Foundational Grammar (`10 sequential lessons`, `[GRAMMAR]`)**: Next, Matrix trains on sentence structure, tenses, questions (`what`, `why`, `how`), connectors (`because`, `which`), and conversational turn-taking.
-- **Phase 3 — Real Articles (`[NOTES]`, `[WEB]`, `[ARTICLE]`)**: Finally, Matrix moves on to personal notes in `./matrix_data/study_notes/`, live web articles from **Wikipedia's API**, and the built-in 23-article study encyclopedia.
-- **100% Model-Decoded Training Thoughts**: Every periodic message spoken during training (`"Matrix is learn now!"` → `"I'm learning stuff..."` → `"I am learning which makes more neuron connections in my brain."`) is decoded word-by-word directly from the neural model.
-- Type `chat` + `Enter` anytime during training to jump straight into Chat Mode, or press `Enter` to pause cleanly.
+- **Phase 1 — English Lexicon & Live Web Dictionaries (`[DICT]`)**: Trains first on **8 core chapters (640 foundational words)** from the embedded **4,800-word English lexicon** (`lexicon.json.gz`), enriched with live web definitions from `dictionaryapi.dev` and Wiktionary.
+- **Phase 2 — Foundational Grammar (`8 sequential chapters`, `[GRAMMAR]`)**: Trains on English syntax, pronouns, tenses, adjectives/adverbs, question formation, conjunctions, and natural dialogue.
+- **Phase 3 — Multi-Source Articles & Extended Lexicon (`[NOTES]`, `[WEB]`, `[DICT]`, `[ARTICLE]`)**: Reads personal `.txt`/`.md` notes in `./matrix_data/study_notes/`, full **Wikipedia** articles (up to 14k chars), **Wikibooks** chapters, **arXiv** research abstracts, the remaining **4,160 extended lexicon words**, and the built-in 23-article study encyclopedia.
+- **Emergent Neural Thoughts**: Periodic reflections during training are decoded directly from the live neural weights — zero planted `THOUGHT:` strings or milestone scripts.
 
-### 3. Mode 2 — Pure Model-Driven Study Buddy Chat Mode
+### 4. Mode 2 — Full-Vocabulary Neural Study Buddy Chat Mode
 Choose **`[2] Chat Mode`** to talk and study with your Matrix:
-- **Zero built-in fixed answers**: Every reply (including `"hello"` and `"how are you"`) is decoded autoregressively word-by-word from Matrix's trained neural language model and learned transition distributions.
-- **Honest Unknown Detection**: If Matrix hasn't trained yet or you ask about a word/concept it has never read about, it never fakes a canned answer — it tells you honestly what it doesn't know yet.
+- **Zero built-in fixed answers**: Every reply is decoded token-by-token from Matrix's trained neural weights over the full vocabulary.
+- **Subword OOV + Neural Perplexity Unknown Gate**: When Matrix encounters unknown words or high predictive entropy / perplexity on an unstudied topic, it honestly tells you what it hasn't learned yet.
 - Built-in study tools:
-  - `/define <word>` — look up & train on a live/embedded dictionary definition for `<word>`
+  - `/define <word>` — look up & train on an embedded or live web dictionary definition for `<word>`
   - `remember: <fact>` — train Matrix's neural weights directly on a new sentence
-  - `/study <topic>` — have Matrix fetch & train on articles about `<topic>` immediately
-  - `/quiz [topic]` — active-recall fill-in-the-blank quiz generated from studied articles
+  - `/study <topic>` — fetch & train on multi-source articles about `<topic>` immediately
+  - `/quiz [topic]` — active-recall fill-in-the-blank quiz generated from studied passages
   - `/summary` — list studied subjects and recent articles
-  - `/brain` — inspect live neural architecture, learned words, active synapses, and loss
-  - `/train` — jump straight back into Training Mode
+  - `/brain` — inspect live neural architecture, learned vocabulary, active synapses, and loss
+  - `/train` — switch straight back into Training Mode
 
-### 4. Export Name & Share Your Matrixes (`.matrix` Files)
+### 5. Compact Binary Checkpoints & Cross-RAM `.matrix` Sharing
 Choose **`[3] Share / Export`** to:
-- **Export** your Matrix under any custom name into a single compressed, SHA-256 verified `.matrix` file to send to friends.
-- **Import** a friend's `.matrix` file (automatically adapting memory caps safely to *your* PC's RAM).
+- **Export** your Matrix under any custom name into a single gzipped, SHA-256 verified `.matrix` archive backed by **IEEE-754 little-endian binary `float32` tensor serialization (`MXB2`)**.
+- **Import** a friend's `.matrix` file — automatically pruning vocabulary tensors (`PruneToMaxVocab`) and LRU memory structures if imported onto a lower-RAM PC.
 - **Rename** or **Switch / Create** multiple saved Matrixes.
 
 ---

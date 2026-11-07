@@ -58,7 +58,7 @@ func RunInteractive(
 			fmt.Fprintf(out, "  %s Curriculum: Dictionaries mastered! Finishing Grammar (%d/%d) before Real Articles!\n",
 				theme.Green("•"), grammarDone, grammarTotal)
 		} else {
-			fmt.Fprintf(out, "  %s Sources: Live Wikipedia articles + Local notes (%s) + Built-in Encyclopedia\n",
+			fmt.Fprintf(out, "  %s Sources: Wikipedia + Wikibooks + arXiv + 4,800-word Lexicon + Local notes (%s)\n",
 				theme.Green("•"), theme.Dim(cr.NotesDir()))
 		}
 
@@ -147,8 +147,10 @@ func RunLoop(
 
 		wasFreshStart := b.ArticlesRead == 0 && !spokenFirst
 		epochs := 2
-		if strings.HasPrefix(art.Source, "dictionary:") || strings.HasPrefix(art.Source, "curriculum:") {
-			epochs = 3 // Thoroughly reinforce dictionary word meanings & grammar lessons
+		if strings.HasPrefix(art.Source, "curriculum:") || strings.HasPrefix(art.Source, "grammar:") {
+			epochs = 4 // Reinforce core grammar & dialogue structures thoroughly
+		} else if strings.HasPrefix(art.Source, "dictionary:ext-") {
+			epochs = 1
 		}
 		rep := b.TrainOnArticle(art, epochs)
 		sessionArticles++
@@ -227,7 +229,7 @@ func sourceBadge(theme ui.Theme, src string) string {
 	switch {
 	case strings.HasPrefix(src, "dictionary:"):
 		return theme.BoldCyan("[DICT]   ")
-	case strings.HasPrefix(src, "curriculum:"):
+	case strings.HasPrefix(src, "curriculum:"), strings.HasPrefix(src, "grammar:"):
 		return theme.Yellow("[GRAMMAR]")
 	case strings.HasPrefix(src, "http://"), strings.HasPrefix(src, "https://"), strings.HasPrefix(src, "wikipedia:"):
 		return theme.BoldGreen("[WEB]    ")

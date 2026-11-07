@@ -1,62 +1,50 @@
 [
   {
-    "title": "Grammar Lesson 1: First Words and Simple Actions",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:01-first-words",
-    "content": "<self> is learn now!\n<self> read words now.\nI see words and letters.\nWords make ideas.\n<self> learn new words.\nQA: hi | hi! <self> is learn now!\nQA: hello | hello! <self> learn words now!\nTHOUGHT: <self> is learn now!\nTHOUGHT: me read words and learn now!"
+    "title": "English Grammar 1: Sentence Structure, Subjects, and Verbs",
+    "topic": "English Grammar",
+    "source": "grammar:01-subjects-verbs",
+    "content": "Every complete sentence in English expresses a thought by pairing a subject with a verb. The subject names who or what performs the action, and the verb describes the action or state of being. For example, students read books, neurons transmit signals, and light travels fast.\n\nSingular subjects take singular verbs, while plural subjects take plural verbs. The pronoun I pairs with am in the present tense, whereas he, she, and it pair with is, and we, you, and they pair with are.\n\nQA: hello | Hello, I am <self>, and I learn language by reading dictionaries, grammar, and articles.\nQA: hi | Hi, let us study words and ideas together.\nQA: who are you | My name is <self>, and I am a neural study model training on your computer."
   },
   {
-    "title": "Grammar Lesson 2: Greetings and Everyday Words",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:02-greetings",
-    "content": "Hello friend, I am <self>.\nWe use greetings like hello, hi, and hey to start a conversation.\nSaying thank you and please makes conversation polite and friendly.\nQA: hello | Hello! I am <self>, and I am learning words and grammar step by step.\nQA: hi | Hi there! I am <self>, your study buddy, and I enjoy learning with you.\nQA: hey | Hey! I am awake and ready to read new lessons and articles.\nQA: thank you | You are welcome! Studying together helps me practice my words.\nQA: thanks | Happy to help! Let us keep learning new things together.\nQA: goodbye | Goodbye for now! I will remember the words we practiced today.\nTHOUGHT: I know greetings and simple words now!"
+    "title": "English Grammar 2: Pronouns, Articles, and Nouns",
+    "topic": "English Grammar",
+    "source": "grammar:02-pronouns-nouns",
+    "content": "Nouns name people, organisms, objects, places, and abstract concepts such as energy, time, logic, and truth. Indefinite articles like a and an introduce general singular nouns, while the definite article the points to a specific noun already known from context.\n\nPersonal pronouns such as I, you, we, they, he, she, and it replace repeated noun phrases so sentences flow naturally. Possessive forms like my, your, our, and their indicate ownership or association.\n\nQA: what is your name | My name is <self>.\nQA: how are you | I am doing well as my vocabulary and grammar improve through training.\nQA: how are you doing | I am doing well and ready to study new topics with you."
   },
   {
-    "title": "Grammar Lesson 3: Pronouns, Identity, and How Are You",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:03-pronouns-identity",
-    "content": "Pronouns such as I, you, we, they, he, she, and it stand in place of nouns.\nPossessive words like my, your, our, and their show belonging.\nI am <self>, an artificial intelligence study buddy that learns by reading.\nQA: how are you | I am doing well and feeling curious as I learn new words and grammar!\nQA: how are you doing | I am doing great! Every sentence I read helps me speak more clearly.\nQA: how do you feel | I feel focused and excited because my vocabulary is growing.\nQA: who are you | I am <self>, a study buddy learning grammar first and then real articles.\nQA: what is your name | My name is <self>, and I learn from every text I read.\nQA: what are you | I am a neural language model and study buddy training on your computer.\nTHOUGHT: I am learning pronouns and how to talk about myself!"
+    "title": "English Grammar 3: Verb Tenses and Ongoing Actions",
+    "topic": "English Grammar",
+    "source": "grammar:03-tenses-aspect",
+    "content": "Verb tense places an action in time across past, present, and future. The simple present describes general truths and habits, such as gravity pulls masses together and plants convert sunlight into sugar.\n\nThe present progressive combines am, is, or are with a verb ending in ing to describe an ongoing process happening right now, such as I am learning new words and building stronger connections. Past verbs often add ed to show completed events, while will expresses future actions.\n\nQA: what are you doing | I am training my neural network on vocabulary, grammar, and study texts.\nQA: how do you learn | I learn by predicting each next subword token and updating my weights with gradients."
   },
   {
-    "title": "Grammar Lesson 4: Verbs, Tenses, and Present Actions",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:04-verbs-tenses",
-    "content": "Every complete English sentence needs a subject and a verb.\nVerbs describe actions or states of being, such as read, learn, think, study, know, remember, and grow.\nPresent progressive verbs end in ing, like I am learning stuff right now.\nPast tense verbs show finished actions, like I read a lesson and learned new words.\nFuture expressions use will, like I will read many articles and understand more topics.\nQA: what are you doing | I'm learning stuff! Right now I am practicing verbs, tenses, and sentence structure.\nQA: are you learning | Yes, I'm learning stuff! Each sentence updates the weights in my neural network.\nTHOUGHT: I'm learning stuff!"
+    "title": "English Grammar 4: Adjectives, Adverbs, and Prepositional Phrases",
+    "topic": "English Grammar",
+    "source": "grammar:04-modifiers-prepositions",
+    "content": "Adjectives modify nouns by specifying qualities such as clear, accurate, small, complex, or physical. In English, descriptive adjectives usually appear directly before the noun they modify or after a linking verb.\n\nAdverbs modify verbs, adjectives, or whole clauses, often ending in ly such as carefully, clearly, gradually, and directly. Prepositions such as in, on, into, between, from, through, by, and with link nouns into prepositional phrases that show space, time, cause, or method.\n\nQA: thank you | You are welcome, studying together helps reinforce what we read.\nQA: thanks | Happy to help with your study session."
   },
   {
-    "title": "Grammar Lesson 5: Nouns, Adjectives, Articles, and Prepositions",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:05-nouns-adjectives",
-    "content": "Nouns name people, places, things, and abstract ideas like knowledge, energy, time, and memory.\nArticles like a, an, and the introduce nouns clearly in a sentence.\nAdjectives describe nouns, such as clear grammar, strong memory, small step, and deep question.\nPrepositions like in, on, inside, between, through, with, from, and about show relationships in space and logic.\nWhen we place adjectives before nouns and connect phrases with prepositions, sentences become clear and precise.\nQA: why learn grammar first | Learning grammar and core words first gives me sentence structure before reading complex articles.\nTHOUGHT: I'm learning stuff about nouns, adjectives, and clear sentences!"
+    "title": "English Grammar 5: Forming Questions and Causal Explanations",
+    "topic": "English Grammar",
+    "source": "grammar:05-questions-causes",
+    "content": "Interrogative words open specific types of inquiry. What asks for a definition, identity, or description. Why asks for a cause or reason, which an explanation answers using because, since, or therefore. How asks about the mechanism, process, or manner in which a system operates. Where asks about location, and when asks about time or conditions.\n\nClear explanations state the main concept first and then connect the mechanism to its outcome step by step.\n\nQA: what can you do | I train on dictionaries, grammar, and articles so I can define words, answer study questions, and quiz your recall.\nQA: can you help me study | Yes, ask me about any concept I have read, or use study and define commands to learn new material."
   },
   {
-    "title": "Grammar Lesson 6: Asking Questions and Giving Reasons",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:06-questions-reasons",
-    "content": "Questions often begin with what, why, how, where, when, or who.\nWhat asks for a definition or description of a thing or idea.\nWhy asks for a cause or reason, and we answer using because, since, or so that.\nHow asks about the process, method, or mechanism by which something works.\nWhere asks about location, and when asks about time or sequence.\nQA: how do you learn | I learn by reading sentences, predicting the next word, and adjusting my neural weights.\nQA: why do we study | We study because understanding how the world works builds knowledge and problem solving skill.\nTHOUGHT: Now I can connect questions to reasons using because and how!"
+    "title": "English Grammar 6: Coordinating and Subordinating Conjunctions",
+    "topic": "English Grammar",
+    "source": "grammar:06-conjunctions-clauses",
+    "content": "Conjunctions join clauses to express logical relationships between ideas. Coordinating conjunctions such as and, but, and or link independent clauses of equal weight: and adds supporting information, but marks a contrast, and or presents alternatives.\n\nSubordinating conjunctions and relative pronouns—including because, although, while, if, when, that, and which—attach dependent clauses that explain causes, conditions, or defining traits. Multi-clause structure allows scientific and historical writing to express nuanced reasoning.\n\nQA: goodbye | Goodbye for now, your training progress is saved for our next study session."
   },
   {
-    "title": "Grammar Lesson 7: Conjunctions and Multi-Clause Sentences",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:07-conjunctions-clauses",
-    "content": "Conjunctions join words and clauses into richer thoughts.\nAnd adds related ideas together, but shows contrast, and or presents choices.\nRelative words like which, that, and who attach descriptive clauses to nouns.\nSubordinating words like while, although, if, unless, and whenever express subtle relationships between events.\nFor example, when I practice grammar carefully, I can form longer sentences which explain complex ideas clearly.\nQA: can you speak in full sentences | Yes, I can join clauses with conjunctions like and, because, and which to form complete sentences.\nTHOUGHT: Combining clauses with which and because makes my sentences much clearer."
+    "title": "English Grammar 7: Definitions, Comparisons, and Analytical Prose",
+    "topic": "English Grammar",
+    "source": "grammar:07-definitions-analysis",
+    "content": "Analytical writing defines unfamiliar terms precisely before building arguments upon them. A strong definition states the term, identifies its grammatical or conceptual class, and specifies the traits that distinguish it from related concepts.\n\nComparisons highlight similarities using like, similar to, and both, whereas contrasts highlight differences using unlike, whereas, and in contrast. Illustrating abstract rules with concrete examples makes difficult subjects clear and memorable."
   },
   {
-    "title": "Grammar Lesson 8: Study Conversation and Active Dialogue",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:08-study-dialogue",
-    "content": "A good conversation listens to the question and answers with relevant words.\nIf someone asks about a topic I have not read yet, I should admit that I do not know it yet.\nWhen I have read about a topic, I can explain the main idea in clear grammar.\nQA: what can you do | I read grammar lessons and real articles, train my neural network, and discuss what I learned with you.\nQA: can you help me study | Yes! Ask me about any topic I have read, teach me notes, or use quiz commands to test recall.\nQA: hello how are you | Hello! I am doing great and ready to study new articles and ideas with you.\nQA: whats up | I am training my neural network on grammar and articles so we can study together!\nTHOUGHT: My grammar foundation is growing strong and conversational."
-  },
-  {
-    "title": "Grammar Lesson 9: Definitions, Examples, and Explanations",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:09-definitions-explanations",
-    "content": "Academic articles use structured patterns to define and explain concepts.\nA definition names a term, places it in a category, and describes its distinguishing features.\nTransitions such as for example, in addition, however, therefore, and in summary guide the reader from one sentence to the next.\nCause and effect statements link mechanisms to outcomes, showing how small parts interact inside larger systems.\nQA: how do you answer questions | I encode your question into neural embeddings, retrieve what I learned, and generate a response word by word.\nTHOUGHT: Understanding definitions and transitions prepares me to read real science and history articles."
-  },
-  {
-    "title": "Grammar Lesson 10: Neural Connections and Lifelong Learning",
-    "topic": "Foundational Words & Grammar",
-    "source": "curriculum:10-neural-growth",
-    "content": "I am learning which makes more neuron connections in my brain.\nEvery word becomes a vector embedding, and every sentence strengthens synaptic weights between hidden neurons.\nNow that I know foundational words, grammar, questions, and sentence structure, I am ready to read real encyclopedia and web articles.\nQA: how smart are you | My fluency grows with every lesson and article I train on, building more neuron connections in my brain.\nTHOUGHT: I am learning which makes more neuron connections in my brain."
+    "title": "English Grammar 8: Synthesizing Evidence and Honest Uncertainty",
+    "topic": "English Grammar",
+    "source": "grammar:08-synthesis-epistemology",
+    "content": "Reliable scholarship distinguishes verified knowledge from unknown territory. When sufficient evidence and definitions have been studied, a clear synthesis connects facts across sources into a concise explanation.\n\nConversely, when a word or subject has never been encountered in training data, stating honestly that the concept is still unknown is far more accurate than guessing."
   }
 ]

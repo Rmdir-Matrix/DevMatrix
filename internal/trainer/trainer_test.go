@@ -22,13 +22,13 @@ func TestDictionariesFirstThenGrammarThenArticles(t *testing.T) {
 	prof, _ := specs.BuildProfile(specs.HardwareInfo{TotalRAMMB: 4096, AvailableRAMMB: 2048, CPUCores: 2}, 512)
 	b := brain.NewBrain("Matrix", prof)
 
-	if got := GenerateTrainingThought(b, brain.TrainStepReport{}); got != "" {
+	if got := GenerateTrainingThought(b, brain.TrainReport{}); got != "" {
 		t.Fatalf("expected empty thought on untrained brain, got %q", got)
 	}
 
 	var out bytes.Buffer
 	err = RunLoop(&out, ui.NewTheme(false), b, cr, Options{
-		MaxArticles: 26, // 12 dictionaries + 10 grammar lessons + 4 encyclopedia articles
+		MaxArticles: 20, // 8 core dictionaries + 8 grammar lessons + 4 Phase-3 items
 		StepDelay:   0,
 		DataDir:     dir,
 	}, make(chan struct{}))
@@ -39,12 +39,11 @@ func TestDictionariesFirstThenGrammarThenArticles(t *testing.T) {
 	got := out.String()
 	dictIdx := strings.Index(got, "[DICT]")
 	gramIdx := strings.Index(got, "[GRAMMAR]")
-	artIdx := strings.Index(got, "[ARTICLE]")
 
-	if dictIdx < 0 || gramIdx < 0 || artIdx < 0 {
-		t.Fatalf("expected [DICT], [GRAMMAR], and [ARTICLE] stages in output:\n%s", got)
+	if dictIdx < 0 || gramIdx < 0 {
+		t.Fatalf("expected [DICT] and [GRAMMAR] stages in output:\n%s", got)
 	}
-	if !(dictIdx < gramIdx && gramIdx < artIdx) {
-		t.Fatalf("expected strict order [DICT] (%d) -> [GRAMMAR] (%d) -> [ARTICLE] (%d)", dictIdx, gramIdx, artIdx)
+	if !(dictIdx < gramIdx) {
+		t.Fatalf("expected strict order [DICT] (%d) -> [GRAMMAR] (%d)", dictIdx, gramIdx)
 	}
 }

@@ -165,14 +165,16 @@ func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *cor
 		b.Level, b.XP, brain.XPForLevel(b.Level+1))
 	fmt.Fprintf(out, "  Curriculum      : Dictionaries %d/%d  →  Grammar %d/%d  →  Real Articles\n",
 		dictsDone, dictsTotal, grammarDone, grammarTotal)
-	fmt.Fprintf(out, "  Neural Architecture : %d embed dim → %d hidden neurons → %d/%d learned words\n",
+	fmt.Fprintf(out, "  Neural Architecture : Causal Self-Attention + GRU (%dD embed → %d GRU neurons → %d/%d vocab)\n",
 		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab)
-	fmt.Fprintf(out, "  Active Synapses : %d learned neuron connections\n", b.Net.ActiveSynapses())
+	fmt.Fprintf(out, "  Optimizer & Compute : AdamW (batch %d • %d worker threads) • %d learned synapses\n",
+		b.BatchSize, b.WorkerThreads, b.Net.ActiveSynapses())
 	fmt.Fprintf(out, "  Training Stats  : %d items read • %d tokens trained • smoothed loss: %.4f\n",
 		b.ArticlesRead, b.TokensTrained, b.SmoothedLoss)
-	fmt.Fprintf(out, "  Study Memory    : %d/%d indexed passages\n", len(b.Passages), b.MaxPassages)
-	fmt.Fprintf(out, "  Article Sources : %d dictionaries → %d grammar lessons → Live Web + %d articles + notes (%s)\n",
-		dictsTotal, grammarTotal, cr.SeedCount(), cr.NotesDir())
+	fmt.Fprintf(out, "  Study Memory    : %d/%d passages • %d/%d lexical entries (LRU-bounded)\n",
+		len(b.Passages), b.MaxPassages, len(b.Dictionary), b.MaxDictEntries)
+	fmt.Fprintf(out, "  Article Sources : %d-word Dictionary (%d core ch.) → %d Grammar → Wikipedia/Wikibooks/arXiv + %d articles + notes (%s)\n",
+		cr.DictionaryWordCount(), dictsTotal, grammarTotal, cr.SeedCount(), cr.NotesDir())
 	if topics := b.TopTopics(5); len(topics) > 0 {
 		fmt.Fprintf(out, "  Top Topics      : %s\n", strings.Join(topics, ", "))
 	}

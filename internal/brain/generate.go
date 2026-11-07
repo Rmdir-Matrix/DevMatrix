@@ -3,605 +3,411 @@ package brain
 import (
 	"fmt"
 	"math"
-	mrand "math/rand"
+	"math/rand"
+	"sort"
 	"strings"
 	"time"
-	"unicode"
 )
 
-// CheckKnowledge verifies whether the model has actually learned the words/concepts in userInput.
-// Returns (true, "") when the model knows enough to generate an answer, or (false, honestReason)
-// when untrained or asked about unknown words/topics.
-func (b *Brain) CheckKnowledge(userInput string) (bool, string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.checkKnowledgeLocked(userInput)
+// GenerateModelReply decodes a response 100% from the Causal Self-Attention + GRU language model
+// over the full vocabulary (zero n-gram lookup tables, zero hardcoded reply maps).
+// Returns (reply, known=false, reason) when subword OOV or neural perplexity detects unknown input.
+func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
+	trimmed := strings.TrimSpace(userInput)
+	if trimmed == "" {
+		return "", false, "Say something or ask a study question."
+	}
+
+	if b.Net == nil || b.Net.AdamStep == 0 || b.Net.LearnedWordCount() < 12 {
+		return "", false, fmt.Sprintf(
+			"My neural weights are untrained (%d words, 0 learned synapses). Start Mode 1 (Training Mode) so I can study my dictionaries and grammar first.",
+			b.Net.LearnedWordCount(),
+		)
+	}
+
+	// 1. Subword WordPiece tokenization + OOV check (no hardcoded conversational word list!)
+	promptSubwords, unknownWords := EncodeWithVocab(trimmed, b.Name, b.Net.KnowsToken)
+	if len(unknownWords) > 0 {
+		shown := unknownWords
+		if len(shown) > 4 {
+			shown = shown[:4]
+		}
+		return "", false, fmt.Sprintf(
+			"I do not know %q yet (%d words in my vocabulary). Try '/define %s' or '/study %s' to teach me!",
+			strings.Join(shown, ", "), b.Net.LearnedWordCount(), shown[0], shown[0],
+		)
+	}
+	if len(promptSubwords) == 0 {
+		return "", false, "I could not parse any known words from that input."
+	}
+
+	// 2. Retrieve relevant <ctx> subwords from learned Dictionary or Semantic Passages
+	ctxSubwords := b.retrieveContextSubwords(trimmed)
+
+	// 3. Build neural conditioning sequence: [<ctx> ctxSubwords] <ask> promptSubwords <ans>
+	askSub := promptSubwords
+	if len(askSub) > 14 {
+		askSub = askSub[len(askSub)-14:]
+	}
+	askIDs := b.Net.LookupTokens(askSub)
+
+	var condSeq []int
+	if len(ctxSubwords) > 0 {
+		if len(ctxSubwords) > 24 {
+			ctxSubwords = ctxSubwords[:24]
+		}
+		condSeq = append(condSeq, ctxID)
+		condSeq = append(condSeq, b.Net.LookupTokens(ctxSubwords)...)
+	}
+	condSeq = append(condSeq, askID)
+	condSeq = append(condSeq, askIDs...)
+	condSeq = append(condSeq, ansID)
+
+	// 4. Neural Perplexity / Predictive Entropy Uncertainty Gate
+	probs, logits, entropy, maxProb := b.Net.ForwardFullVocab(condSeq)
+	if len(probs) == 0 {
+		return "", false, "My neural vocabulary is empty."
+	}
+
+	V := float64(b.Net.LearnedWordCount() + 2)
+	maxPossibleEntropy := math.Log(math.Max(V, 4.0))
+	normEntropy := entropy / maxPossibleEntropy
+	perplexity := math.Exp(entropy)
+
+	// When no <ctx> passage/definition matched, require strong direct neural confidence
+	// (e.g. learned conversational QA patterns have high maxProb & low entropy; unstudied topics have flat distributions).
+	if len(ctxSubwords) == 0 {
+		kws := ExtractKeywords(trimmed, 6)
+		// If asking about domain keywords with zero retrieved memory and low direct neural confidence, report unknown
+		if maxProb < 0.075 || normEntropy > 0.84 {
+			topicHint := trimmed
+			if len(kws) > 0 {
+				topicHint = strings.Join(kws, " ")
+			}
+			return "", false, fmt.Sprintf(
+				"My neural uncertainty is too high on %q (perplexity %.1f, confidence %.1f%%) and I have no studied notes on it yet. Try '/study %s' or 'remember: <fact>'!",
+				topicHint, perplexity, maxProb*100, topicHint,
+			)
+		}
+	} else if maxProb < 0.025 {
+		return "", false, fmt.Sprintf(
+			"My neural weights are not confident enough to form an answer yet (perplexity %.1f). Train me further in Mode 1!",
+			perplexity,
+		)
+	}
+
+	// 5. Full-Vocabulary Autoregressive Nucleus (Top-P / Top-K) Decoding
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	maxGenTokens := 26
+	temperature := float32(0.45)
+	if b.Level < 5 {
+		temperature = 0.55
+	}
+
+	generated := b.decodeAutoregressive(condSeq, probs, logits, maxGenTokens, temperature, 14, 0.85, rng)
+	if len(generated) == 0 {
+		return "", false, "I could not decode a complete sentence from my neural weights yet. Train me a bit more in Mode 1!"
+	}
+
+	reply := DetokenizeSubwords(generated, b.Name)
+	if strings.TrimSpace(reply) == "" {
+		return "", false, "My decoded output was empty; please train me on more grammar and articles."
+	}
+	return reply, true, ""
 }
 
-func (b *Brain) checkKnowledgeLocked(userInput string) (bool, string) {
-	if b.TokensTrained == 0 || b.Net == nil || b.Net.LearnedWordCount() == 0 {
-		return false, "I don't know any words or grammar yet (0 tokens trained). Start Mode 1 (Training) first!"
-	}
-
-	rawToks := b.normalizeSelfTokens(Tokenize(userInput))
-	var wordToks []string
-	for _, t := range rawToks {
-		if isWordToken(t) {
-			wordToks = append(wordToks, t)
-		}
-	}
-	if len(wordToks) == 0 {
-		return false, "I didn't catch any words I recognize."
-	}
-
-	topicWords := ExtractTopicWords(wordToks)
-	if len(topicWords) > 0 {
-		knownTopics := 0
-		firstUnknown := ""
-		for _, tw := range topicWords {
-			if b.knowsWordOrStemLocked(tw) {
-				knownTopics++
-			} else if firstUnknown == "" {
-				firstUnknown = tw
-			}
-		}
-		// Require single-concept queries to be known, and multi-word queries to know at least half the topic terms
-		if knownTopics == 0 || (len(topicWords) <= 2 && firstUnknown != "") || float64(knownTopics)/float64(len(topicWords)) < 0.5 {
-			return false, fmt.Sprintf("I don't know about %q yet — I haven't read any training data covering it. Try `/study %s` or train me more in Mode 1!", firstUnknown, firstUnknown)
-		}
-		return true, ""
-	}
-
-	// Conversational / grammar query (e.g. "hello", "how are you", "who are you"):
-	// Every core word (or >= 65% for longer sentences) must exist in the model's learned vocabulary!
-	knownConv := 0
-	firstMissing := ""
-	for _, w := range wordToks {
-		if w == selfToken || b.knowsWordOrStemLocked(w) {
-			knownConv++
-		} else if firstMissing == "" {
-			firstMissing = w
-		}
-	}
-	if knownConv == 0 || float64(knownConv)/float64(len(wordToks)) < 0.65 {
-		return false, fmt.Sprintf("I haven't learned the word %q yet — train me a little more so I learn more words and grammar!", firstMissing)
-	}
-	return true, ""
-}
-
-// GenerateModelReply checks whether Matrix knows the words/topic in userInput; if unknown, returns
-// known=false with an honest unknown message. Otherwise, decodes a response 100% token-by-token
-// from the trained neural network and learned transition distributions.
-func (b *Brain) GenerateModelReply(userInput string) (reply string, known bool, unknownMsg string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	ok, reason := b.checkKnowledgeLocked(userInput)
-	if !ok {
-		return "", false, reason
-	}
-
-	qToks := b.normalizeSelfTokens(Tokenize(userInput))
-	var wordToks []string
-	for _, t := range qToks {
-		if isWordToken(t) {
-			wordToks = append(wordToks, t)
-		}
-	}
-
-	// Gather relevant learned passages only when query asks about domain/dictionary target words
-	topicWords := ExtractTopicWords(wordToks)
-	var hits []Passage
-	if len(topicWords) > 0 {
-		hits = b.searchPassagesLocked(strings.Join(topicWords, " "), 2)
-		if len(hits) == 0 {
-			hasCue := false
-			for _, tw := range topicWords {
-				if len(b.PromptStarters[tw]) > 0 {
-					hasCue = true
-					break
-				}
-			}
-			if !hasCue {
-				return "", false, fmt.Sprintf("I recognize the word %q, but I haven't learned enough facts about it yet. Try `/study %s`!", topicWords[0], topicWords[0])
-			}
-		}
-	}
-
-	condToks := append([]string(nil), wordToks...)
-	boostSet := make(map[string]bool)
-	var passageStarterHints []string
-
-	for idx, h := range hits {
-		pToks := Tokenize(h.Text)
-		for _, pt := range pToks {
-			if isWordToken(pt) && !stopWords[pt] {
-				boostSet[pt] = true
-			}
-		}
-		if idx == 0 && len(pToks) >= 2 {
-			passageStarterHints = append(passageStarterHints, pToks[0]+" "+pToks[1])
-			condToks = append(condToks, h.Keywords...)
-		}
-	}
-
-	starterCues := wordToks
-	if len(topicWords) > 0 {
-		starterCues = topicWords
-	}
-
-	maxWords := b.maxDecodeLengthForLevel()
-	decoded := b.decodeSequenceLocked(starterCues, condToks, boostSet, passageStarterHints, maxWords)
-	if strings.TrimSpace(decoded) == "" {
-		return "", false, "I don't have enough trained connections to form an answer for that yet — train me a bit more!"
-	}
-
-	// If high-level Matrix has multiple distinct relevant passages, optionally decode a second sentence!
-	if b.Level >= 35 && len(hits) >= 2 && len(topicWords) > 0 {
-		h2Toks := Tokenize(hits[1].Text)
-		if len(h2Toks) >= 4 {
-			boost2 := make(map[string]bool)
-			for _, pt := range h2Toks {
-				if isWordToken(pt) && !stopWords[pt] {
-					boost2[pt] = true
-				}
-			}
-			cond2 := append([]string(nil), topicWords...)
-			cond2 = append(cond2, hits[1].Keywords...)
-			second := b.decodeSequenceLocked(hits[1].Keywords, cond2, boost2, []string{h2Toks[0] + " " + h2Toks[1]}, maxWords)
-			if second != "" && !strings.EqualFold(second, decoded) {
-				decoded = decoded + " " + second
-			}
-		}
-	}
-
-	return decoded, true, ""
-}
-
-// GenerateModelThought decodes an unscripted training reflection directly from the neural model
-// conditioned on [<thought>, stageCue, optionalTopicKeyword].
-func (b *Brain) GenerateModelThought(sampleKeywords []string) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.TokensTrained == 0 || b.Net == nil || b.Net.LearnedWordCount() == 0 {
+// GenerateThoughtFromWeights decodes an emergent status thought during Training Mode
+// 100% from the Causal Self-Attention + GRU neural weights (zero fmt.Sprintf templates!).
+func (b *Brain) GenerateThoughtFromWeights(recentTitle, recentExcerpt string) string {
+	if b.Net == nil || b.Net.AdamStep == 0 || b.Net.LearnedWordCount() < 6 {
 		return ""
 	}
 
-	stage := thoughtStageCue(b.Level)
-	cues := []string{thoughtToken, stage}
-	boost := make(map[string]bool)
-	for _, kw := range sampleKeywords {
-		if b.Net.KnowsToken(kw) {
-			cues = append(cues, kw)
-			boost[kw] = true
-			break
+	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(b.ArticlesRead*79)))
+
+	// Seed the neural decoder with <bos> + 1..2 subwords from the newly learned item so the
+	// GRU + Self-Attention completes a genuine thought from its current weights.
+	seedSource := recentExcerpt
+	if strings.TrimSpace(seedSource) == "" {
+		seedSource = recentTitle
+	}
+	subwords := SubwordTokenize(seedSource)
+
+	seq := []int{bosID}
+	limitSeed := 2
+	if b.Level <= 2 {
+		limitSeed = 1
+	}
+	added := 0
+	var outTokens []string
+	for _, sw := range subwords {
+		if b.Net.KnowsToken(sw) && isAlphaNumericToken(sw) {
+			seq = append(seq, b.Net.TokenToID[sw])
+			outTokens = append(outTokens, sw)
+			added++
+			if added >= limitSeed {
+				break
+			}
 		}
 	}
 
-	maxLen := b.maxDecodeLengthForLevel()
-	return b.decodeSequenceLocked(cues, cues, boost, nil, maxLen)
-}
-
-func (b *Brain) maxDecodeLengthForLevel() int {
-	switch {
-	case b.Level <= 3:
-		return 10
-	case b.Level <= 9:
-		return 16
-	case b.Level <= 25:
-		return 24
-	default:
-		return 34
+	probs, logits, _, _ := b.Net.ForwardFullVocab(seq)
+	if len(probs) == 0 {
+		return ""
 	}
-}
 
-func (b *Brain) temperatureForLevel() float64 {
-	switch {
-	case b.Level <= 3:
-		return 0.55
-	case b.Level <= 12:
-		return 0.42
-	case b.Level <= 50:
-		return 0.34
-	default:
-		return 0.28
+	// Decoding horizon and sharpness naturally reflect model maturity
+	maxToks := 10 + minInt(b.Level, 14)
+	temp := float32(0.70)
+	if b.Level >= 6 {
+		temp = 0.50
 	}
+
+	cont := b.decodeAutoregressive(seq, probs, logits, maxToks, temp, 12, 0.85, rng)
+	outTokens = append(outTokens, cont...)
+	if len(outTokens) < 3 {
+		return ""
+	}
+	return DetokenizeSubwords(outTokens, b.Name)
 }
 
-func (b *Brain) decodeSequenceLocked(
-	cueTokens []string,
-	condTokens []string,
-	boostTokens map[string]bool,
-	extraStarters []string,
+func (b *Brain) retrieveContextSubwords(userInput string) []string {
+	lower := strings.ToLower(strings.TrimSpace(userInput))
+	kws := ExtractKeywords(userInput, 6)
+
+	isDefAsk := strings.HasPrefix(lower, "define ") ||
+		strings.Contains(lower, "what does ") ||
+		strings.Contains(lower, "meaning of ") ||
+		(strings.HasPrefix(lower, "what is ") && len(kws) == 1)
+
+	// 1. Check lexical dictionary first for explicit word definitions
+	if isDefAsk {
+		for _, kw := range kws {
+			if kw == "define" || kw == "mean" || kw == "meaning" {
+				continue
+			}
+			if entry, ok := b.LookupDictionary(kw); ok {
+				return SubwordTokenize(entry.Definition)
+			}
+		}
+		rawToks := Tokenize(userInput)
+		for _, rt := range rawToks {
+			if rt == "define" || rt == "mean" || rt == "meaning" || stopWords[rt] {
+				continue
+			}
+			if entry, ok := b.LookupDictionary(rt); ok {
+				return SubwordTokenize(entry.Definition)
+			}
+		}
+	}
+
+	// 2. Search studied domain passages using topic keywords (avoiding question-word noise)
+	if len(kws) > 0 {
+		searchQuery := strings.Join(kws, " ")
+		hits := b.SearchPassagesWithScore(searchQuery, 2)
+		if len(hits) > 0 && hits[0].Score >= 0.32 {
+			// For multi-keyword queries, verify topical relevance
+			if len(kws) == 1 || hits[0].Score >= 0.45 {
+				return SubwordTokenize(hits[0].Passage.Text)
+			}
+		}
+	}
+
+	// 3. Fallback to dictionary entry ONLY when prompt is a question or concept inquiry (not bare greetings)
+	isInquiry := strings.Contains(lower, "?") ||
+		strings.HasPrefix(lower, "what ") ||
+		strings.HasPrefix(lower, "explain ") ||
+		strings.HasPrefix(lower, "describe ") ||
+		strings.HasPrefix(lower, "tell ")
+	if isInquiry && len(kws) == 1 {
+		if entry, ok := b.LookupDictionary(kws[0]); ok {
+			return SubwordTokenize(entry.Definition)
+		}
+	}
+	return nil
+}
+
+func (b *Brain) decodeAutoregressive(
+	initSeq []int,
+	firstProbs []float32,
+	firstLogits []float32,
 	maxSteps int,
-) string {
-	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
-	temp := b.temperatureForLevel()
+	temperature float32,
+	topK int,
+	topP float64,
+	rng *rand.Rand,
+) []string {
+	seq := make([]int, len(initSeq), len(initSeq)+maxSteps)
+	copy(seq, initSeq)
 
-	condIDs := make([]int, 0, len(condTokens))
-	for _, ct := range condTokens {
-		if id, ok := b.Net.TokenToID[ct]; ok {
-			condIDs = append(condIDs, id)
-		}
-	}
-	if len(condIDs) == 0 {
-		condIDs = []int{bosID}
-	}
+	seenCounts := make(map[int]int, maxSteps)
+	var out []string
+	prevID := -1
 
-	// 1. Gather candidate starter phrases from learned PromptStarters
-	starterWeights := make(map[string]float64)
-	if len(cueTokens) > 0 && len(cueTokens) <= 5 {
-		exactKey := "p:" + strings.Join(cueTokens, "_")
-		for st, cnt := range b.PromptStarters[exactKey] {
-			starterWeights[st] += float64(cnt) * 16.0
-		}
-	}
-	if len(starterWeights) == 0 {
-		for i := 0; i+1 < len(cueTokens); i++ {
-			bg := cueTokens[i] + "_" + cueTokens[i+1]
-			for st, cnt := range b.PromptStarters[bg] {
-				starterWeights[st] += float64(cnt) * 5.0
+	curLogits := firstLogits
+	for step := 0; step < maxSteps; step++ {
+		if step > 0 {
+			_, curLogits, _, _ = b.Net.ForwardFullVocab(seq)
+			if len(curLogits) == 0 {
+				break
 			}
 		}
-	}
-	if len(starterWeights) == 0 {
-		for _, ct := range cueTokens {
-			if len(cueTokens) > 1 && stopWords[ct] {
-				continue
-			}
-			for st, cnt := range b.PromptStarters[ct] {
-				starterWeights[st] += float64(cnt) * 1.5
-			}
-		}
-	}
-	for _, ex := range extraStarters {
-		if strings.TrimSpace(ex) != "" {
-			starterWeights[ex] += 12.0
-		}
-	}
 
-	// Fallback to learned <sep> starters only if cues were conversational and no direct cue hit
-	if len(starterWeights) == 0 {
-		for tok, cnt := range b.NGramCounts[sepToken] {
-			if tok != eosToken {
-				starterWeights[tok] += float64(cnt)
+		nextID := sampleTopKTopP(curLogits, seenCounts, prevID, step, temperature, topK, topP, b.Net.IDToToken, rng)
+		if nextID == eosID || nextID <= bosID {
+			if step >= 3 {
+				break
 			}
-		}
-	}
-	if len(starterWeights) == 0 {
-		return ""
-	}
-
-	type starterCand struct {
-		tokens []string
-		first  int
-		weight float64
-	}
-	var sCands []starterCand
-	var sFirstIDs []int
-	for st, w := range starterWeights {
-		parts := strings.Fields(st)
-		if len(parts) == 0 {
 			continue
 		}
-		fid, ok := b.Net.TokenToID[parts[0]]
-		if !ok {
-			continue
-		}
-		sCands = append(sCands, starterCand{tokens: parts, first: fid, weight: w})
-		sFirstIDs = append(sFirstIDs, fid)
-	}
-	if len(sCands) == 0 {
-		return ""
-	}
 
-	sNeural := b.Net.ForwardLogits(condIDs, padID, padID, sepID, sFirstIDs)
-	sScores := make([]float32, len(sCands))
-	for i, sc := range sCands {
-		bonus := float32(0)
-		for _, pt := range sc.tokens {
-			if boostTokens[pt] {
-				bonus += 2.2
-			}
-		}
-		sScores[i] = sNeural[i] + float32(1.45*math.Log(sc.weight+1.0)) + bonus
-	}
+		tok := b.Net.IDToToken[nextID]
+		out = append(out, tok)
+		seq = append(seq, nextID)
+		seenCounts[nextID]++
+		prevID = nextID
 
-	pickedIdx := sampleIndexFromLogits(sScores, temp, rng)
-	history := append([]string(nil), sCands[pickedIdx].tokens...)
-	usedBigrams := make(map[string]int)
-	if len(history) >= 2 {
-		usedBigrams[history[0]+" "+history[1]] = 1
-	}
-
-	// 2. Autoregressive token-by-token decoding using NeuralNet + learned transition counts
-	hardCap := maxSteps + 14
-	for len(history) < hardCap {
-		pastSoftLimit := len(history) >= maxSteps
-		prev1 := history[len(history)-1]
-		prev2 := sepToken
-		if len(history) >= 2 {
-			prev2 = history[len(history)-2]
-		}
-		prev3 := padToken
-		if len(history) >= 3 {
-			prev3 = history[len(history)-3]
-		} else if len(history) == 2 {
-			prev3 = sepToken
-		}
-
-		quadMap := b.NGramCounts[prev3+" "+prev2+" "+prev1]
-		triMap := b.NGramCounts[prev2+" "+prev1]
-		biMap := b.NGramCounts[prev1]
-
-		candWeights := make(map[string]float64)
-		for tok, cnt := range quadMap {
-			candWeights[tok] += float64(cnt) * 10.0
-		}
-		for tok, cnt := range triMap {
-			candWeights[tok] += float64(cnt) * 3.0
-		}
-		if len(candWeights) == 0 {
-			for tok, cnt := range biMap {
-				candWeights[tok] += float64(cnt)
-			}
-		}
-
-		if len(candWeights) == 0 {
+		// Stop cleanly at sentence-ending punctuation once a complete clause is formed
+		if (tok == "." || tok == "!" || tok == "?") && len(out) >= 6 {
 			break
-		}
-
-		var cTokens []string
-		var cIDs []int
-		for tok := range candWeights {
-			if tok == eosToken && len(history) < 3 && len(candWeights) > 1 {
-				continue
-			}
-			id, ok := b.Net.TokenToID[tok]
-			if !ok {
-				continue
-			}
-			cTokens = append(cTokens, tok)
-			cIDs = append(cIDs, id)
-		}
-		if len(cTokens) == 0 {
-			break
-		}
-
-		p3ID := b.tokenIDOrPad(prev3)
-		p2ID := b.tokenIDOrPad(prev2)
-		p1ID := b.tokenIDOrPad(prev1)
-
-		nLogits := b.Net.ForwardLogits(condIDs, p3ID, p2ID, p1ID, cIDs)
-		combined := make([]float32, len(cTokens))
-		for i, tok := range cTokens {
-			score := nLogits[i] + float32(1.50*math.Log(candWeights[tok]+1.0))
-			if boostTokens[tok] {
-				score += 3.0
-			}
-			if pastSoftLimit && (tok == eosToken || tok == "." || tok == "!" || tok == "?") {
-				score += 4.5
-			}
-			if reps := usedBigrams[prev1+" "+tok]; reps > 0 {
-				score -= float32(reps) * 3.2
-			}
-			if tok == prev1 {
-				score -= 4.0
-			}
-			combined[i] = score
-		}
-
-		nextIdx := sampleIndexFromLogits(combined, temp, rng)
-		chosen := cTokens[nextIdx]
-		if chosen == eosToken || chosen == padToken {
-			break
-		}
-
-		usedBigrams[prev1+" "+chosen]++
-		history = append(history, chosen)
-
-		if (chosen == "." || chosen == "!" || chosen == "?") && len(history) >= 5 {
-			break
-		}
-	}
-
-	return b.detokenizeWithSelf(history)
-}
-
-func (b *Brain) tokenIDOrPad(tok string) int {
-	if id, ok := b.Net.TokenToID[tok]; ok {
-		return id
-	}
-	return padID
-}
-
-func (b *Brain) normalizeSelfTokens(tokens []string) []string {
-	selfLower := strings.ToLower(strings.TrimSpace(b.Name))
-	out := make([]string, len(tokens))
-	for i, t := range tokens {
-		if t == selfLower || t == "matrix" {
-			out[i] = selfToken
-		} else {
-			out[i] = t
 		}
 	}
 	return out
 }
 
-func (b *Brain) knowsWordOrStemLocked(word string) bool {
-	if b.Net.KnowsToken(word) {
-		return true
+func sampleTopKTopP(
+	logits []float32,
+	seenCounts map[int]int,
+	prevID int,
+	step int,
+	temperature float32,
+	topK int,
+	topP float64,
+	idToTok []string,
+	rng *rand.Rand,
+) int {
+	if temperature < 0.05 {
+		temperature = 0.05
 	}
-	// Check simple plural/singular suffix match in learned vocabulary
-	if strings.HasSuffix(word, "s") && len(word) > 4 && b.Net.KnowsToken(strings.TrimSuffix(word, "s")) {
-		return true
-	}
-	if b.Net.KnowsToken(word + "s") {
-		return true
-	}
-	if len(word) >= 6 {
-		prefix := word[:len(word)-1]
-		for tok, id := range b.Net.TokenToID {
-			if id >= reservedTokensCount && b.Net.TokenCounts[id] > 0 && strings.HasPrefix(tok, prefix) {
-				return true
-			}
-		}
-	}
-	return false
-}
+	invTemp := float32(1.0) / temperature
 
-func (b *Brain) detokenizeWithSelf(tokens []string) string {
-	var out strings.Builder
-	capNext := true
+	prevWasPunct := false
+	prevWasSubword := false
+	if prevID >= 0 && prevID < len(idToTok) {
+		pt := idToTok[prevID]
+		prevWasPunct = !isAlphaNumericToken(pt) && !strings.HasPrefix(pt, "##")
+		prevWasSubword = strings.HasPrefix(pt, "##")
+	}
 
-	for i, tok := range tokens {
-		if tok == eosToken || tok == padToken || tok == bosToken || tok == sepToken || tok == thoughtToken {
+	type cand struct {
+		id    int
+		logit float32
+		prob  float64
+	}
+	pool := make([]cand, 0, len(logits))
+
+	for vid, rawL := range logits {
+		if rawL <= -27.5 {
 			continue
 		}
-		display := tok
-		if tok == selfToken {
-			display = b.Name
-		} else if tok == "i" {
-			display = "I"
-		} else if tok == "i'm" {
-			display = "I'm"
-		}
-
-		isPunct := tok == "." || tok == "," || tok == "!" || tok == "?" || tok == ";" || tok == ":"
-		if i > 0 && out.Len() > 0 && !isPunct {
-			out.WriteByte(' ')
-		}
-		if capNext && len(display) > 0 && tok != selfToken {
-			runes := []rune(display)
-			runes[0] = unicode.ToUpper(runes[0])
-			display = string(runes)
-			capNext = false
-		} else if !isPunct {
-			capNext = false
-		}
-		if tok == "." || tok == "!" || tok == "?" {
-			capNext = true
-		}
-		out.WriteString(display)
-	}
-
-	res := strings.TrimSpace(out.String())
-	if res != "" && !strings.HasSuffix(res, ".") && !strings.HasSuffix(res, "!") && !strings.HasSuffix(res, "?") {
-		res += "."
-	}
-	return res
-}
-
-// PickQuizPassage chooses a learned passage and masks one salient keyword for active-recall quizzing.
-func (b *Brain) PickQuizPassage(topicHint string) (passage Passage, answer string, maskedText string, ok bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if len(b.Passages) == 0 {
-		return Passage{}, "", "", false
-	}
-
-	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
-	pool := b.Passages
-	if strings.TrimSpace(topicHint) != "" {
-		q := strings.ToLower(strings.TrimSpace(topicHint))
-		var filtered []Passage
-		for _, p := range b.Passages {
-			if strings.Contains(strings.ToLower(p.Topic), q) || strings.Contains(strings.ToLower(p.Title), q) {
-				filtered = append(filtered, p)
-			}
-		}
-		if len(filtered) > 0 {
-			pool = filtered
-		}
-	}
-
-	for tries := 0; tries < 10; tries++ {
-		cand := pool[rng.Intn(len(pool))]
-		if len(cand.Keywords) == 0 {
+		// Never repeat the exact same token immediately in a row
+		if vid == prevID {
 			continue
 		}
-		ans := cand.Keywords[rng.Intn(len(cand.Keywords))]
-		if len(ans) < 4 {
+		if vid == eosID {
+			if step < 4 {
+				continue
+			}
+			pool = append(pool, cand{id: vid, logit: rawL * invTemp})
 			continue
 		}
-		masked := maskWordCaseInsensitive(cand.Text, ans)
-		if masked != cand.Text {
-			return cand, ans, masked, true
+
+		tok := idToTok[vid]
+		isSub := strings.HasPrefix(tok, "##")
+		isPunct := !isAlphaNumericToken(tok) && !isSub
+
+		if step == 0 && (isSub || isPunct) {
+			continue
 		}
-	}
-	return Passage{}, "", "", false
-}
+		// Subword suffix "##..." can only follow an alphanumeric root word when genuinely high-probability
+		if isSub && (prevWasPunct || prevWasSubword || rawL < -1.35) {
+			continue
+		}
+		// Prevent consecutive punctuation ("..", ".,", etc.)
+		if isPunct && prevWasPunct {
+			continue
+		}
 
-// AwardStudyXP grants bonus XP from interactive Chat Mode studying or quizzes.
-func (b *Brain) AwardStudyXP(xp int64) (oldLevel, newLevel int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	oldLevel = b.Level
-	if xp > 0 {
-		b.XP += xp
-		b.Level = LevelFromXP(b.XP)
-	}
-	return oldLevel, b.Level
-}
-
-func sampleIndexFromLogits(logits []float32, temp float64, rng *mrand.Rand) int {
-	if len(logits) <= 1 {
-		return 0
-	}
-	if temp <= 0.05 {
-		best := 0
-		for i := 1; i < len(logits); i++ {
-			if logits[i] > logits[best] {
-				best = i
+		adj := rawL // rawL is log(prob) <= 0
+		if cnt := seenCounts[vid]; cnt > 0 {
+			if isPunct {
+				adj -= float32(cnt) * 2.2
+			} else if stopWords[tok] {
+				if cnt >= 2 {
+					adj -= float32(cnt-1) * 1.8
+				} else {
+					adj -= 0.45
+				}
+			} else {
+				adj -= float32(cnt) * 2.4
 			}
 		}
-		return best
+		pool = append(pool, cand{id: vid, logit: adj * invTemp})
 	}
-	maxL := float64(logits[0])
-	for _, l := range logits[1:] {
-		if float64(l) > maxL {
-			maxL = float64(l)
+
+	if len(pool) == 0 {
+		return eosID
+	}
+
+	sort.Slice(pool, func(i, j int) bool {
+		return pool[i].logit > pool[j].logit
+	} )
+	if topK > 0 && len(pool) > topK {
+		pool = pool[:topK]
+	}
+
+	maxL := pool[0].logit
+	var sumExp float64
+	for i := range pool {
+		e := math.Exp(float64(pool[i].logit - maxL))
+		pool[i].prob = e
+		sumExp += e
+	}
+	for i := range pool {
+		pool[i].prob /= sumExp
+	}
+
+	// Nucleus Top-P cutoff
+	if topP > 0 && topP < 1.0 {
+		var cum float64
+		keep := 0
+		for i := range pool {
+			cum += pool[i].prob
+			keep++
+			if cum >= topP {
+				break
+			}
+		}
+		if keep < 1 {
+			keep = 1
+		}
+		pool = pool[:keep]
+		var renorm float64
+		for i := range pool {
+			renorm += pool[i].prob
+		}
+		for i := range pool {
+			pool[i].prob /= renorm
 		}
 	}
-	weights := make([]float64, len(logits))
-	var sum float64
-	for i, l := range logits {
-		w := math.Exp((float64(l) - maxL) / temp)
-		weights[i] = w
-		sum += w
-	}
-	r := rng.Float64() * sum
+
+	r := rng.Float64()
 	var acc float64
-	for i, w := range weights {
-		acc += w
+	for _, c := range pool {
+		acc += c.prob
 		if r <= acc {
-			return i
+			return c.id
 		}
 	}
-	return len(logits) - 1
-}
-
-func isWordToken(tok string) bool {
-	if tok == selfToken {
-		return true
-	}
-	for _, r := range tok {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return true
-		}
-	}
-	return false
-}
-
-func maskWordCaseInsensitive(sentence, target string) string {
-	lowerSent := strings.ToLower(sentence)
-	lowerTarg := strings.ToLower(target)
-	idx := strings.Index(lowerSent, lowerTarg)
-	if idx < 0 {
-		return sentence
-	}
-	return sentence[:idx] + "________" + sentence[idx+len(target):]
+	return pool[len(pool)-1].id
 }

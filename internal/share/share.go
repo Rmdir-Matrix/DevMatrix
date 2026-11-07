@@ -20,7 +20,7 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-const ShareFormatVersion = "matrix-share-v1"
+const ShareFormatVersion = "matrix-share-v2"
 
 // ShareSummary holds human-readable metadata inside a .matrix portable file.
 type ShareSummary struct {
@@ -41,21 +41,20 @@ type shareEnvelope struct {
 	BrainPayload   []byte       `json:"brain_payload"`
 }
 
-// ExportMatrix packages a Brain under exportName into a single portable .matrix file.
-// Returns (resolvedFilePath, sizeBytes, error).
+// ExportMatrix packages a Brain under exportName into a single portable .matrix file
+// using compact IEEE-754 float32 binary tensor encoding inside gzip.
 func ExportMatrix(b *brain.Brain, exportName string, outPath string) (string, int64, error) {
 	chosenName := config.SanitizeMatrixName(exportName)
 	if chosenName == "" {
 		chosenName = b.Name
 	}
 
-	// Clone metadata name cleanly for the exported payload without mutating caller unexpectedly
 	origName := b.Name
 	b.Name = chosenName
-	rawBrain, err := json.Marshal(b)
+	rawBrain, err := b.MarshalCompactBinary()
 	b.Name = origName
 	if err != nil {
-		return "", 0, fmt.Errorf("serialize brain: %w", err)
+		return "", 0, fmt.Errorf("serialize brain binary: %w", err)
 	}
 
 	sum := sha256.Sum256(rawBrain)
@@ -104,8 +103,8 @@ func ExportMatrix(b *brain.Brain, exportName string, outPath string) (string, in
 	return absOut, int64(buf.Len()), nil
 }
 
-// ImportMatrix loads and verifies a shared .matrix archive, adapts its memory caps safely
-// to the local machine's hardware profile, and saves it into dataDir/brains.
+// ImportMatrix loads and verifies a shared .matrix archive, prunes its neural vocabulary
+// and memory structures safely to fit the local hardware profile, and saves it into dataDir/brains.
 func ImportMatrix(filePath string, dataDir string, prof specs.ComputeProfile) (*brain.Brain, ShareSummary, error) {
 	f, err := os.Open(strings.TrimSpace(filePath))
 	if err != nil {
@@ -132,8 +131,8 @@ func ImportMatrix(filePath string, dataDir string, prof specs.ComputeProfile) (*
 		return nil, ShareSummary{}, fmt.Errorf("checksum mismatch: .matrix file appears corrupted")
 	}
 
-	var loaded brain.Brain
-	if err := json.Unmarshal(env.BrainPayload, &loaded); err != nil {
+	loaded, err := brain.UnmarshalCompactBinary(env.BrainPayload)
+	if err != nil {
 		return nil, ShareSummary{}, fmt.Errorf("decode brain weights: %w", err)
 	}
 	if strings.TrimSpace(env.Summary.ExportedName) != "" {
@@ -144,7 +143,7 @@ func ImportMatrix(filePath string, dataDir string, prof specs.ComputeProfile) (*
 	if err := loaded.Save(dataDir); err != nil {
 		return nil, ShareSummary{}, err
 	}
-	return &loaded, env.Summary, nil
+	return loaded, env.Summary, nil
 }
 
 // ListSavedBrains returns summaries of all saved Matrix brains inside dataDir/brains.
@@ -164,23 +163,10 @@ func ListSavedBrains(dataDir string, prof specs.ComputeProfile) ([]ShareSummary,
 			continue
 		}
 		full := filepath.Join(brainsDir, e.Name())
-		f, err := os.Open(full)
-		if err != nil {
+		b, err := brain.LoadFile(full, prof)
+		if err != nil || b.Net == nil {
 			continue
 		}
-		gr, err := gzip.NewReader(f)
-		if err != nil {
-			_ = f.Close()
-			continue
-		}
-		var b brain.Brain
-		decErr := json.NewDecoder(gr).Decode(&b)
-		_ = gr.Close()
-		_ = f.Close()
-		if decErr != nil || b.Net == nil {
-			continue
-		}
-		b.ApplyProfileCaps(prof)
 		list = append(list, ShareSummary{
 			ExportedName:   b.Name,
 			Level:          b.Level,

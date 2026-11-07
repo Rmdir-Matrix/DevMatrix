@@ -1,9 +1,12 @@
 package corpus
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	_ "embed"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math/rand"
@@ -15,8 +18,8 @@ import (
 	"time"
 )
 
-//go:embed dictionary_entries.json
-var embeddedDictionaryJSON []byte
+//go:embed lexicon.json.gz
+var embeddedLexiconGZ []byte
 
 //go:embed grammar_curriculum.json
 var embeddedGrammarJSON []byte
@@ -25,50 +28,107 @@ var embeddedGrammarJSON []byte
 var embeddedSeedJSON []byte
 
 const (
-	maxHTTPBytes       = 256 * 1024
+	maxHTTPBytes       = 384 * 1024
 	maxLocalFileBytes  = 512 * 1024
 	httpRequestTimeout = 4 * time.Second
-	userAgentHeader    = "MatrixStudyBuddy/1.0 (CLI Educational AI Study Companion)"
+	userAgentHeader    = "MatrixStudyBuddy/2.0 (CLI On-Device Neural Study Model)"
 )
 
-// Article represents a dictionary volume, grammar lesson, or real training article read by Matrix.
+// Article represents a dictionary chapter, grammar lesson, research abstract, or article.
 type Article struct {
 	Title   string `json:"title"`
 	Topic   string `json:"topic"`
-	Source  string `json:"source"` // e.g. "dictionary:...", "curriculum:...", "wikipedia:...", "local:...", "embedded:..."
+	Source  string `json:"source"`
 	Content string `json:"content"`
 }
 
-// Reader supplies real training data in natural order:
-//  1. Core English Dictionaries FIRST (word meanings & parts of speech)
-//  2. Foundational Grammar & Sentence Structure SECOND
-//  3. Local Study Notes, Live Web Articles & Built-in Encyclopedia THIRD
-type Reader struct {
-	notesDir          string
-	httpClient        *http.Client
-	dictionaryVolumes []Article
-	grammarLessons    []Article
-	seedArticles      []Article
-	rng               *rand.Rand
-	offlineUntil      time.Time
-	DisableLiveFetch  bool
+type lexiconEntry struct {
+	Word    string `json:"w"`
+	POS     string `json:"p"`
+	Def     string `json:"d"`
+	Example string `json:"e"`
 }
 
-// NewReader creates an Article Reader rooted at dataDir/study_notes.
+type lexiconChapter struct {
+	Chapter int            `json:"chapter"`
+	Tier    string         `json:"tier"`
+	Title   string         `json:"title"`
+	Entries []lexiconEntry `json:"entries"`
+}
+
+// Reader streams training items in curriculum order:
+//  1. Core English Dictionary Chapters + Live Web Dictionary entries FIRST
+//  2. English Grammar & Conversational Prose SECOND
+//  3. Local Notes + Multi-Source Live Web (Wikipedia, Wikibooks, arXiv) + Extended 4,800-word Lexicon + Encyclopedia THIRD
+type Reader struct {
+	notesDir         string
+	httpClient       *http.Client
+	coreDicts        []Article
+	extendedDicts    []Article
+	dictIndex        map[string]lexiconEntry
+	totalDictWords   int
+	grammarLessons   []Article
+	seedArticles     []Article
+	rng              *rand.Rand
+	offlineUntil     time.Time
+	webRoundRobin    int
+	stepCounter      int
+	DisableLiveFetch bool
+}
+
+// NewReader decompresses the 4,800-word English lexicon, grammar chapters, and offline encyclopedia.
 func NewReader(dataDir string) (*Reader, error) {
-	var dicts []Article
-	if err := json.Unmarshal(embeddedDictionaryJSON, &dicts); err != nil {
-		return nil, fmt.Errorf("load embedded dictionary corpus: %w", err)
+	gr, err := gzip.NewReader(bytes.NewReader(embeddedLexiconGZ))
+	if err != nil {
+		return nil, fmt.Errorf("decompress lexicon.json.gz: %w", err)
+	}
+	var rawChapters []lexiconChapter
+	if err := json.NewDecoder(gr).Decode(&rawChapters); err != nil {
+		_ = gr.Close()
+		return nil, fmt.Errorf("decode lexicon.json.gz: %w", err)
+	}
+	_ = gr.Close()
+
+	var coreDicts, extDicts []Article
+	dictIndex := make(map[string]lexiconEntry, 5000)
+	totalWords := 0
+
+	for _, ch := range rawChapters {
+		var sb strings.Builder
+		for _, e := range ch.Entries {
+			dictIndex[e.Word] = e
+			totalWords++
+			if e.Example != "" {
+				fmt.Fprintf(&sb, "DICT: %s | %s | %s | %s\n", e.Word, e.POS, e.Def, e.Example)
+			} else {
+				fmt.Fprintf(&sb, "DICT: %s | %s | %s\n", e.Word, e.POS, e.Def)
+			}
+		}
+		srcPrefix := "dictionary:ext"
+		if ch.Tier == "core" {
+			srcPrefix = "dictionary:core"
+		}
+		art := Article{
+			Title:   ch.Title,
+			Topic:   "English Dictionary",
+			Source:  fmt.Sprintf("%s-%02d", srcPrefix, ch.Chapter),
+			Content: sb.String(),
+		}
+		if ch.Tier == "core" {
+			coreDicts = append(coreDicts, art)
+		} else {
+			extDicts = append(extDicts, art)
+		}
 	}
 
 	var grammar []Article
 	if err := json.Unmarshal(embeddedGrammarJSON, &grammar); err != nil {
-		return nil, fmt.Errorf("load embedded grammar curriculum: %w", err)
+		return nil, fmt.Errorf("load grammar curriculum: %w", err)
 	}
 
 	var seeds []Article
 	if err := json.Unmarshal(embeddedSeedJSON, &seeds); err != nil {
-		return nil, fmt.Errorf("load embedded study corpus: %w", err)
+		return nil, fmt.Errorf("load seed articles: %w", err)
 	}
 
 	notesDir := ""
@@ -79,31 +139,37 @@ func NewReader(dataDir string) (*Reader, error) {
 	}
 
 	return &Reader{
-		notesDir: notesDir,
-		httpClient: &http.Client{
-			Timeout: httpRequestTimeout,
-		},
-		dictionaryVolumes: dicts,
-		grammarLessons:    grammar,
-		seedArticles:      seeds,
-		rng:               rand.New(rand.NewSource(time.Now().UnixNano())),
+		notesDir:       notesDir,
+		httpClient:     &http.Client{Timeout: httpRequestTimeout},
+		coreDicts:      coreDicts,
+		extendedDicts:  extDicts,
+		dictIndex:      dictIndex,
+		totalDictWords: totalWords,
+		grammarLessons: grammar,
+		seedArticles:   seeds,
+		rng:            rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
-// NotesDir returns the local folder where users can drop .txt/.md study notes.
-func (r *Reader) NotesDir() string {
-	return r.notesDir
-}
+// NotesDir returns the local directory where users can drop .txt/.md study files.
+func (r *Reader) NotesDir() string { return r.notesDir }
 
-// DictionaryCount returns how many sequential dictionary volumes exist in Phase 1.
-func (r *Reader) DictionaryCount() int {
-	return len(r.dictionaryVolumes)
-}
+// DictionaryCount returns the number of mandatory Phase-1 core dictionary chapters.
+func (r *Reader) DictionaryCount() int { return len(r.coreDicts) }
 
-// DictionaryCompleted counts how many dictionary volumes Matrix has trained on so far.
+// TotalDictionaryWords returns total embedded dictionary headwords across all 60 chapters (4,800).
+func (r *Reader) TotalDictionaryWords() int { return r.totalDictWords }
+
+// DictionaryWordCount returns total embedded dictionary headwords (4,800).
+func (r *Reader) DictionaryWordCount() int { return r.totalDictWords }
+
+// ExtendedDictionaryCount returns the number of Phase-3 extended dictionary chapters (52).
+func (r *Reader) ExtendedDictionaryCount() int { return len(r.extendedDicts) }
+
+// DictionaryCompleted counts how many Phase-1 core dictionary chapters have been completed.
 func (r *Reader) DictionaryCompleted(seen map[string]bool) int {
 	done := 0
-	for _, d := range r.dictionaryVolumes {
+	for _, d := range r.coreDicts {
 		if seen[d.Source] {
 			done++
 		}
@@ -111,12 +177,10 @@ func (r *Reader) DictionaryCompleted(seen map[string]bool) int {
 	return done
 }
 
-// GrammarCount returns how many sequential foundational grammar lessons exist in Phase 2.
-func (r *Reader) GrammarCount() int {
-	return len(r.grammarLessons)
-}
+// GrammarCount returns how many sequential grammar chapters exist in Phase 2.
+func (r *Reader) GrammarCount() int { return len(r.grammarLessons) }
 
-// GrammarCompleted counts how many foundational grammar lessons Matrix has completed so far.
+// GrammarCompleted counts how many Phase-2 grammar chapters have been completed.
 func (r *Reader) GrammarCompleted(seen map[string]bool) int {
 	done := 0
 	for _, g := range r.grammarLessons {
@@ -127,29 +191,33 @@ func (r *Reader) GrammarCompleted(seen map[string]bool) int {
 	return done
 }
 
-// SeedCount returns how many built-in encyclopedic articles are embedded in the binary.
-func (r *Reader) SeedCount() int {
-	return len(r.seedArticles)
-}
+// SeedCount returns how many offline multi-paragraph study articles are embedded.
+func (r *Reader) SeedCount() int { return len(r.seedArticles) }
 
-// NextArticle fetches the next training item in strict curriculum order:
-//  1. Sequential Dictionary Volumes FIRST (word definitions & parts of speech)
-//  2. Sequential Grammar & Sentence Structure Lessons SECOND
-//  3. Unread Local Study Notes (.txt / .md)
-//  4. Live Web Wikipedia Articles (with automatic offline cooldown fallback)
-//  5. Built-in Real Study Encyclopedia
+// NextArticle returns the next training document:
+//   - Phase 1: Core English Dictionary Chapters (640 words) + Live Web Dictionary batches FIRST
+//   - Phase 2: English Grammar & Syntax Chapters SECOND
+//   - Phase 3: Local Notes + Multi-Source Live Web (Wikipedia, Wikibooks, arXiv) + Extended 4,160-word Dictionary + Offline Articles
 func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSources map[string]bool) (Article, error) {
 	topicFilter = strings.TrimSpace(topicFilter)
+	r.stepCounter++
 
 	if topicFilter == "" {
-		// Phase 1: Train on Dictionaries FIRST!
-		for _, dictVol := range r.dictionaryVolumes {
-			if !seenSources[dictVol.Source] {
-				return dictVol, nil
+		// Phase 1: Core English Dictionaries FIRST (plus live web dictionary enrichment when online!)
+		for idx, dictChap := range r.coreDicts {
+			if !seenSources[dictChap.Source] {
+				// Halfway through Phase 1, also try pulling a live web dictionary batch if online
+				liveKey := fmt.Sprintf("dictionary:live-batch-%d", idx/3)
+				if idx > 0 && idx%3 == 0 && !seenSources[liveKey] && r.canFetchLive() {
+					if liveBatch, err := r.fetchLiveDictionaryBatch(ctx, liveKey); err == nil {
+						return liveBatch, nil
+					}
+				}
+				return dictChap, nil
 			}
 		}
 
-		// Phase 2: Train on Grammar & Sentence Structure SECOND!
+		// Phase 2: English Grammar & Sentence Structure SECOND
 		for _, lesson := range r.grammarLessons {
 			if !seenSources[lesson.Source] {
 				return lesson, nil
@@ -157,15 +225,42 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 		}
 	}
 
-	// Phase 3A: Check unread local study notes (.txt / .md)
+	// Explicit dictionary focus topic
+	qLower := strings.ToLower(topicFilter)
+	if qLower == "dictionary" || qLower == "lexicon" || qLower == "vocabulary" {
+		for _, d := range r.coreDicts {
+			if !seenSources[d.Source] {
+				return d, nil
+			}
+		}
+		for _, d := range r.extendedDicts {
+			if !seenSources[d.Source] {
+				return d, nil
+			}
+		}
+		if len(r.extendedDicts) > 0 {
+			return r.extendedDicts[r.rng.Intn(len(r.extendedDicts))], nil
+		}
+	}
+
+	// Phase 3A: Unread user study notes (.txt / .md)
 	if localArt, ok := r.nextUnreadLocalNote(topicFilter, seenSources); ok {
 		return localArt, nil
 	}
 
-	// Phase 3B: Try live Wikipedia article if online and not in temporary offline cooldown
-	if !r.DisableLiveFetch && time.Now().After(r.offlineUntil) {
-		liveArt, err := r.fetchWikipediaArticle(ctx, topicFilter, seenSources)
-		if err == nil && len(strings.Fields(liveArt.Content)) >= 35 {
+	// Phase 3B: Periodically interleave unread Extended Dictionary chapters (Ch.9..60, 4,160 more words!)
+	if topicFilter == "" && r.stepCounter%4 == 0 {
+		for _, ext := range r.extendedDicts {
+			if !seenSources[ext.Source] {
+				return ext, nil
+			}
+		}
+	}
+
+	// Phase 3C: Multi-source Live Web Article Fetching (Wikipedia Full Text + Wikibooks + arXiv)
+	if r.canFetchLive() {
+		liveArt, err := r.fetchMultiSourceWebArticle(ctx, topicFilter, seenSources)
+		if err == nil && len(strings.Fields(liveArt.Content)) >= 40 {
 			return liveArt, nil
 		}
 		if err != nil {
@@ -173,33 +268,15 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 		}
 	}
 
-	// Phase 3C: Select from embedded study encyclopedia (or matching dictionary volume if topic="dictionary")
-	qLower := strings.ToLower(topicFilter)
-	if qLower == "dictionary" || qLower == "words" || qLower == "vocabulary" {
-		for _, d := range r.dictionaryVolumes {
-			if !seenSources[d.Source] {
-				return d, nil
-			}
-		}
-		if len(r.dictionaryVolumes) > 0 {
-			return r.dictionaryVolumes[r.rng.Intn(len(r.dictionaryVolumes))], nil
-		}
-	}
-
-	if len(r.seedArticles) == 0 {
-		return Article{}, fmt.Errorf("no training articles available")
-	}
-
+	// Phase 3D: Offline Encyclopedia + remaining Extended Dictionary chapters
 	candidates := make([]Article, 0, len(r.seedArticles))
 	unread := make([]Article, 0, len(r.seedArticles))
-
 	for _, a := range r.seedArticles {
-		if qLower != "" {
-			if !strings.Contains(strings.ToLower(a.Topic), qLower) &&
-				!strings.Contains(strings.ToLower(a.Title), qLower) &&
-				!strings.Contains(strings.ToLower(a.Content), qLower) {
-				continue
-			}
+		if qLower != "" &&
+			!strings.Contains(strings.ToLower(a.Topic), qLower) &&
+			!strings.Contains(strings.ToLower(a.Title), qLower) &&
+			!strings.Contains(strings.ToLower(a.Content), qLower) {
+			continue
 		}
 		candidates = append(candidates, a)
 		if !seenSources[a.Source] {
@@ -210,48 +287,86 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 	if len(unread) > 0 {
 		return unread[r.rng.Intn(len(unread))], nil
 	}
+	if topicFilter == "" {
+		for _, ext := range r.extendedDicts {
+			if !seenSources[ext.Source] {
+				return ext, nil
+			}
+		}
+	}
 	if len(candidates) > 0 {
 		return candidates[r.rng.Intn(len(candidates))], nil
-	}
-
-	for _, a := range r.seedArticles {
-		if !seenSources[a.Source] {
-			return a, nil
-		}
 	}
 	return r.seedArticles[r.rng.Intn(len(r.seedArticles))], nil
 }
 
-// FetchDictionaryEntry looks up a word's definition from the live Free Dictionary API (if online)
-// or searches the embedded dictionary volumes.
+// FetchDictionaryEntry looks up a word across live Free Dictionary API, Wiktionary REST API,
+// and the embedded 4,800-word lexicon.
 func (r *Reader) FetchDictionaryEntry(ctx context.Context, word string) (Article, error) {
 	cleanWord := strings.ToLower(strings.TrimSpace(word))
 	if cleanWord == "" {
 		return Article{}, fmt.Errorf("empty word")
 	}
 
-	if !r.DisableLiveFetch && time.Now().After(r.offlineUntil) {
+	if r.canFetchLive() {
 		if art, err := r.fetchLiveDictionaryAPI(ctx, cleanWord); err == nil {
+			return art, nil
+		}
+		if art, err := r.fetchWiktionaryAPI(ctx, cleanWord); err == nil {
 			return art, nil
 		}
 	}
 
-	// Fallback: search embedded dictionary volumes for DICT: <word> | ...
-	prefix := "dict: " + cleanWord + " |"
-	for _, vol := range r.dictionaryVolumes {
-		for _, line := range strings.Split(vol.Content, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
-				return Article{
-					Title:   "Dictionary Entry: " + cleanWord,
-					Topic:   "English Dictionary",
-					Source:  "dictionary:word:" + cleanWord,
-					Content: trimmed,
-				}, nil
+	if e, ok := r.dictIndex[cleanWord]; ok {
+		line := fmt.Sprintf("DICT: %s | %s | %s", e.Word, e.POS, e.Def)
+		if e.Example != "" {
+			line += " | " + e.Example
+		}
+		return Article{
+			Title:   "Dictionary Entry: " + e.Word,
+			Topic:   "English Dictionary",
+			Source:  "dictionary:word:" + e.Word,
+			Content: line,
+		}, nil
+	}
+
+	return Article{}, fmt.Errorf("no dictionary entry found for %q", cleanWord)
+}
+
+func (r *Reader) canFetchLive() bool {
+	return !r.DisableLiveFetch && time.Now().After(r.offlineUntil)
+}
+
+func (r *Reader) fetchLiveDictionaryBatch(ctx context.Context, batchKey string) (Article, error) {
+	probeWords := []string{"inference", "cognition", "synthesis", "theorem", "empirical", "entropy", "algorithm", "plasticity"}
+	start := r.rng.Intn(len(probeWords))
+	var sb strings.Builder
+	fetched := 0
+
+	for i := 0; i < 3; i++ {
+		w := probeWords[(start+i)%len(probeWords)]
+		art, err := r.fetchLiveDictionaryAPI(ctx, w)
+		if err != nil {
+			art, err = r.fetchWiktionaryAPI(ctx, w)
+		}
+		if err == nil {
+			sb.WriteString(art.Content)
+			if !strings.HasSuffix(art.Content, "\n") {
+				sb.WriteByte('\n')
 			}
+			fetched++
 		}
 	}
-	return Article{}, fmt.Errorf("no dictionary entry found for %q", cleanWord)
+	if fetched == 0 {
+		r.offlineUntil = time.Now().Add(45 * time.Second)
+		return Article{}, fmt.Errorf("live dictionary unreachable")
+	}
+	return Article{
+		Title:   "Live Web Dictionary Enrichment",
+		Topic:   "English Dictionary",
+		Source:  batchKey,
+		Content: sb.String(),
+	}, nil
 }
 
 func (r *Reader) fetchLiveDictionaryAPI(ctx context.Context, word string) (Article, error) {
@@ -317,7 +432,7 @@ func (r *Reader) fetchLiveDictionaryAPI(ctx context.Context, word string) (Artic
 		}
 	}
 	if count == 0 {
-		return Article{}, fmt.Errorf("empty dictionary meanings for %q", word)
+		return Article{}, fmt.Errorf("empty meanings")
 	}
 	return Article{
 		Title:   "Live Dictionary: " + entries[0].Word,
@@ -325,6 +440,322 @@ func (r *Reader) fetchLiveDictionaryAPI(ctx context.Context, word string) (Artic
 		Source:  "dictionary:live:" + word,
 		Content: b.String(),
 	}, nil
+}
+
+func (r *Reader) fetchWiktionaryAPI(ctx context.Context, word string) (Article, error) {
+	endpoint := "https://en.wiktionary.org/api/rest_v1/page/definition/" + url.PathEscape(word)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Article{}, err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return Article{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Article{}, fmt.Errorf("wiktionary status %d", resp.StatusCode)
+	}
+
+	var payload map[string][]struct {
+		PartOfSpeech string `json:"partOfSpeech"`
+		Definitions  []struct {
+			Definition string `json:"definition"`
+		} `json:"definitions"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return Article{}, err
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return Article{}, err
+	}
+
+	enSections := payload["en"]
+	var b strings.Builder
+	count := 0
+	for _, sec := range enSections {
+		pos := strings.ToLower(strings.TrimSpace(sec.PartOfSpeech))
+		if pos == "" {
+			pos = "word"
+		}
+		for _, d := range sec.Definitions {
+			cleanDef := stripHTMLTags(d.Definition)
+			if len(cleanDef) < 6 {
+				continue
+			}
+			fmt.Fprintf(&b, "DICT: %s | %s | %s\n", word, pos, cleanDef)
+			count++
+			if count >= 3 {
+				break
+			}
+		}
+		if count >= 3 {
+			break
+		}
+	}
+	if count == 0 {
+		return Article{}, fmt.Errorf("no English wiktionary definitions")
+	}
+	return Article{
+		Title:   "Wiktionary: " + word,
+		Topic:   "English Dictionary",
+		Source:  "dictionary:wiktionary:" + word,
+		Content: b.String(),
+	}, nil
+}
+
+func (r *Reader) fetchMultiSourceWebArticle(ctx context.Context, topic string, seen map[string]bool) (Article, error) {
+	r.webRoundRobin++
+	switch r.webRoundRobin % 3 {
+	case 0:
+		if art, err := r.fetchWikipediaArticle(ctx, topic, seen); err == nil {
+			return art, nil
+		}
+	case 1:
+		if art, err := r.fetchWikibooksChapter(ctx, topic, seen); err == nil {
+			return art, nil
+		}
+		return r.fetchWikipediaArticle(ctx, topic, seen)
+	case 2:
+		if art, err := r.fetchArxivAbstracts(ctx, topic, seen); err == nil {
+			return art, nil
+		}
+		return r.fetchWikipediaArticle(ctx, topic, seen)
+	}
+	return r.fetchWikipediaArticle(ctx, topic, seen)
+}
+
+func (r *Reader) fetchWikipediaArticle(ctx context.Context, topic string, seen map[string]bool) (Article, error) {
+	title := ""
+	topicLabel := "Wikipedia"
+
+	if topic != "" {
+		topicLabel = topic
+		foundTitle, err := r.searchMediaWikiTitle(ctx, "https://en.wikipedia.org/w/api.php", topic, seen)
+		if err != nil {
+			return Article{}, err
+		}
+		title = foundTitle
+	} else {
+		randTitle, randTopic, err := r.randomWikipediaTitle(ctx)
+		if err != nil {
+			return Article{}, err
+		}
+		title = randTitle
+		if randTopic != "" {
+			topicLabel = randTopic
+		}
+	}
+
+	extract, pageURL, err := r.fetchMediaWikiExtract(ctx, "https://en.wikipedia.org/w/api.php", "https://en.wikipedia.org/wiki/", title, 14000)
+	if err != nil {
+		return Article{}, err
+	}
+	src := "wikipedia:" + title
+	if pageURL != "" {
+		src = pageURL
+	}
+	return Article{
+		Title:   title,
+		Topic:   topicLabel,
+		Source:  src,
+		Content: extract,
+	}, nil
+}
+
+func (r *Reader) fetchWikibooksChapter(ctx context.Context, topic string, seen map[string]bool) (Article, error) {
+	query := topic
+	if query == "" {
+		subjects := []string{"Physics", "Biology", "Calculus", "Algorithms", "Chemistry", "Neuroscience", "Linear Algebra"}
+		query = subjects[r.rng.Intn(len(subjects))]
+	}
+	title, err := r.searchMediaWikiTitle(ctx, "https://en.wikibooks.org/w/api.php", query, seen)
+	if err != nil {
+		return Article{}, err
+	}
+	extract, pageURL, err := r.fetchMediaWikiExtract(ctx, "https://en.wikibooks.org/w/api.php", "https://en.wikibooks.org/wiki/", title, 12000)
+	if err != nil {
+		return Article{}, err
+	}
+	return Article{
+		Title:   "Wikibooks: " + title,
+		Topic:   query,
+		Source:  pageURL,
+		Content: extract,
+	}, nil
+}
+
+func (r *Reader) fetchArxivAbstracts(ctx context.Context, topic string, seen map[string]bool) (Article, error) {
+	query := topic
+	if query == "" {
+		subjects := []string{"machine learning", "quantum physics", "neuroscience", "mathematics", "astronomy"}
+		query = subjects[r.rng.Intn(len(subjects))]
+	}
+	endpoint := "https://export.arxiv.org/api/query?max_results=5&search_query=all:" + url.QueryEscape(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Article{}, err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return Article{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Article{}, fmt.Errorf("arxiv status %d", resp.StatusCode)
+	}
+
+	var feed struct {
+		Entries []struct {
+			ID      string `xml:"id"`
+			Title   string `xml:"title"`
+			Summary string `xml:"summary"`
+		} `xml:"entry"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return Article{}, err
+	}
+	if err := xml.Unmarshal(body, &feed); err != nil || len(feed.Entries) == 0 {
+		return Article{}, fmt.Errorf("no arxiv entries")
+	}
+
+	for _, e := range feed.Entries {
+		id := strings.TrimSpace(e.ID)
+		if id == "" || seen[id] {
+			continue
+		}
+		cleanTitle := strings.Join(strings.Fields(e.Title), " ")
+		cleanSum := strings.Join(strings.Fields(e.Summary), " ")
+		if len(strings.Fields(cleanSum)) >= 35 {
+			return Article{
+				Title:   "arXiv: " + cleanTitle,
+				Topic:   query,
+				Source:  id,
+				Content: cleanTitle + ".\n\n" + cleanSum,
+			}, nil
+		}
+	}
+	return Article{}, fmt.Errorf("all fetched arxiv abstracts already seen")
+}
+
+func (r *Reader) randomWikipediaTitle(ctx context.Context) (string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://en.wikipedia.org/api/rest_v1/page/random/summary", nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("wikipedia status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return "", "", err
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Title) == "" {
+		return "", "", fmt.Errorf("decode random summary failed")
+	}
+	return payload.Title, payload.Description, nil
+}
+
+func (r *Reader) searchMediaWikiTitle(ctx context.Context, apiBase, query string, seen map[string]bool) (string, error) {
+	endpoint := apiBase + "?action=query&list=search&format=json&srlimit=10&srsearch=" + url.QueryEscape(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mediawiki search status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Query struct {
+			Search []struct {
+				Title string `json:"title"`
+			} `json:"search"`
+		} `json:"query"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(body, &result); err != nil || len(result.Query.Search) == 0 {
+		return "", fmt.Errorf("no search results for %q", query)
+	}
+
+	for _, hit := range result.Query.Search {
+		slug := strings.ReplaceAll(hit.Title, " ", "_")
+		if !seen["https://en.wikipedia.org/wiki/"+slug] && !seen["https://en.wikibooks.org/wiki/"+slug] {
+			return hit.Title, nil
+		}
+	}
+	return result.Query.Search[r.rng.Intn(len(result.Query.Search))].Title, nil
+}
+
+func (r *Reader) fetchMediaWikiExtract(ctx context.Context, apiBase, wikiPrefix, title string, maxChars int) (string, string, error) {
+	endpoint := fmt.Sprintf("%s?action=query&prop=extracts&explaintext=1&exchars=%d&redirects=1&format=json&titles=%s",
+		apiBase, maxChars, url.QueryEscape(title))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", userAgentHeader)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("mediawiki extract status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Query struct {
+			Pages map[string]struct {
+				Title   string `json:"title"`
+				Extract string `json:"extract"`
+			} `json:"pages"`
+		} `json:"query"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
+	if err != nil {
+		return "", "", err
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", "", err
+	}
+	for _, p := range payload.Query.Pages {
+		cleaned := strings.TrimSpace(p.Extract)
+		if cleaned != "" {
+			pageURL := wikiPrefix + strings.ReplaceAll(p.Title, " ", "_")
+			return cleaned, pageURL, nil
+		}
+	}
+	return "", "", fmt.Errorf("empty extract for %q", title)
 }
 
 func (r *Reader) nextUnreadLocalNote(topicFilter string, seen map[string]bool) (Article, bool) {
@@ -366,7 +797,7 @@ func (r *Reader) nextUnreadLocalNote(topicFilter string, seen map[string]bool) (
 		}
 
 		content := strings.TrimSpace(string(raw))
-		if len(strings.Fields(content)) < 10 {
+		if len(strings.Fields(content)) < 5 {
 			continue
 		}
 		title := strings.TrimSuffix(name, filepath.Ext(name))
@@ -386,155 +817,23 @@ func (r *Reader) nextUnreadLocalNote(topicFilter string, seen map[string]bool) (
 	return Article{}, false
 }
 
-func (r *Reader) fetchWikipediaArticle(ctx context.Context, topic string, seen map[string]bool) (Article, error) {
-	title := ""
-	topicLabel := "General Knowledge"
-
-	if topic != "" {
-		topicLabel = topic
-		foundTitle, err := r.searchWikipediaTitle(ctx, topic, seen)
-		if err != nil {
-			return Article{}, err
+func stripHTMLTags(s string) string {
+	var out strings.Builder
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
 		}
-		title = foundTitle
-	} else {
-		randTitle, randTopic, err := r.randomWikipediaTitle(ctx)
-		if err != nil {
-			return Article{}, err
+		if r == '>' {
+			inTag = false
+			continue
 		}
-		title = randTitle
-		if randTopic != "" {
-			topicLabel = randTopic
+		if !inTag {
+			out.WriteRune(r)
 		}
 	}
-
-	extract, pageURL, err := r.fetchWikipediaExtract(ctx, title)
-	if err != nil {
-		return Article{}, err
-	}
-	src := "wikipedia:" + title
-	if pageURL != "" {
-		src = pageURL
-	}
-	return Article{
-		Title:   title,
-		Topic:   topicLabel,
-		Source:  src,
-		Content: extract,
-	}, nil
-}
-
-func (r *Reader) randomWikipediaTitle(ctx context.Context) (string, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://en.wikipedia.org/api/rest_v1/page/random/summary", nil)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("User-Agent", userAgentHeader)
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("wikipedia status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
-	if err != nil {
-		return "", "", err
-	}
-	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Title) == "" {
-		return "", "", fmt.Errorf("decode random summary failed")
-	}
-	return payload.Title, payload.Description, nil
-}
-
-func (r *Reader) searchWikipediaTitle(ctx context.Context, query string, seen map[string]bool) (string, error) {
-	endpoint := "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=10&srsearch=" + url.QueryEscape(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", userAgentHeader)
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("wikipedia search status %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Query struct {
-			Search []struct {
-				Title string `json:"title"`
-			} `json:"search"`
-		} `json:"query"`
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
-	if err != nil {
-		return "", err
-	}
-	if err := json.Unmarshal(body, &result); err != nil || len(result.Query.Search) == 0 {
-		return "", fmt.Errorf("no search results for %q", query)
-	}
-
-	for _, hit := range result.Query.Search {
-		wikiURL := "https://en.wikipedia.org/wiki/" + strings.ReplaceAll(hit.Title, " ", "_")
-		if !seen[wikiURL] && !seen["wikipedia:"+hit.Title] {
-			return hit.Title, nil
-		}
-	}
-	return result.Query.Search[r.rng.Intn(len(result.Query.Search))].Title, nil
-}
-
-func (r *Reader) fetchWikipediaExtract(ctx context.Context, title string) (string, string, error) {
-	endpoint := "https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&exchars=4500&redirects=1&format=json&titles=" + url.QueryEscape(title)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("User-Agent", userAgentHeader)
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("wikipedia extract status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		Query struct {
-			Pages map[string]struct {
-				Title   string `json:"title"`
-				Extract string `json:"extract"`
-			} `json:"pages"`
-		} `json:"query"`
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
-	if err != nil {
-		return "", "", err
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", "", err
-	}
-	for _, p := range payload.Query.Pages {
-		cleaned := strings.TrimSpace(p.Extract)
-		if cleaned != "" {
-			pageURL := "https://en.wikipedia.org/wiki/" + strings.ReplaceAll(p.Title, " ", "_")
-			return cleaned, pageURL, nil
-		}
-	}
-	return "", "", fmt.Errorf("empty wikipedia extract for %q", title)
+	return strings.TrimSpace(strings.Join(strings.Fields(out.String()), " "))
 }
 
 func ensureNotesReadme(notesDir string) {
@@ -544,6 +843,6 @@ func ensureNotesReadme(notesDir string) {
 	}
 	guide := "Drop any .txt or .md study notes, custom dictionary lists (DICT: word | pos | definition | example),\n" +
 		"lecture summaries, or articles into this folder!\n" +
-		"After Matrix finishes its built-in Dictionaries and Grammar Primer, it will read your notes first.\n"
+		"After Matrix finishes its Core Dictionaries and Grammar Primer, it will read your notes first.\n"
 	_ = os.WriteFile(p, []byte(guide), 0o644)
 }
