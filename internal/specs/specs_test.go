@@ -26,7 +26,7 @@ func TestParseRAMInput(t *testing.T) {
 		{"1024 mb", 1024, true},
 		{"2GB", 2048, true},
 		{"1.5gb", 1536, true},
-		{"8", 8192, true},  // bare small number <= 32 interpreted as GB
+		{"8", 8192, true}, // bare small number <= 32 interpreted as GB
 		{"16", 16384, true},
 		{"256m", 256, true},
 		{"", 0, false},
@@ -71,5 +71,14 @@ func TestBuildProfileSafetyClamp(t *testing.T) {
 	autoProf, _ := BuildProfile(hw, 0)
 	if autoProf.RAMBudgetMB < MinRAMBudgetMB || autoProf.RAMBudgetMB > 1024 {
 		t.Fatalf("unexpected auto budget %d MB for 4 GB system", autoProf.RAMBudgetMB)
+	}
+}
+
+func TestAutomaticBudgetForFourGB(t *testing.T) {
+	for _, available := range []int{4096, 2000, 1000} {
+		got := RecommendBudgetFromSystemRAM(4096, available)
+		if got > 512 || got < MinRAMBudgetMB {
+			t.Fatalf("unsafe automatic budget: %d", got)
+		}
 	}
 }

@@ -50,17 +50,17 @@ func RunSetupWizard(reader *bufio.Reader, out io.Writer, theme ui.Theme, hw spec
 	// 3. Ask for RAM optimization mode
 	autoProfile, _ := specs.BuildProfile(hw, 0)
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, theme.Bold("  How should "+chosenName+" manage your RAM so it never overwhelms your PC?"))
+	fmt.Fprintln(out, theme.Bold("  How should "+chosenName+" manage RAM with a conservative target?"))
 	fmt.Fprintf(out, "    %s Auto-Optimize from detected specs %s\n",
 		theme.BoldGreen("[1]"),
-		theme.Dim(fmt.Sprintf("(Recommended: %d MB cap • %s Tier • %d neurons)",
+		theme.Dim(fmt.Sprintf("(Recommended: %d MB target • %s Tier • %d neurons)",
 			autoProfile.RAMBudgetMB, autoProfile.TierName, autoProfile.HiddenNeurons)),
 	)
 	fmt.Fprintf(out, "    %s Enter my PC's total RAM %s\n",
 		theme.BoldCyan("[2]"),
 		theme.Dim("(Matrix will calculate a safe ~15-20% budget automatically)"),
 	)
-	fmt.Fprintf(out, "    %s Set an exact max RAM limit for Matrix %s\n",
+	fmt.Fprintf(out, "    %s Set a RAM target for Matrix %s\n",
 		theme.Yellow("[3]"),
 		theme.Dim("(e.g. 256MB, 512MB, 1024MB, 2GB)"),
 	)
@@ -104,7 +104,7 @@ func RunSetupWizard(reader *bufio.Reader, out io.Writer, theme ui.Theme, hw spec
 			break
 		}
 		if choice == "3" {
-			mb, note, pErr := askRAMValue(reader, out, theme, "  Enter max RAM cap for Matrix (e.g. 256MB, 512MB, 1024MB, 2GB): ")
+			mb, note, pErr := askRAMValue(reader, out, theme, "  Enter RAM target for Matrix (e.g. 256MB, 512MB, 1024MB, 2GB): ")
 			if pErr != nil {
 				if pErr == io.EOF {
 					ramMode = "auto"
@@ -135,8 +135,9 @@ func RunSetupWizard(reader *bufio.Reader, out io.Writer, theme ui.Theme, hw spec
 	updated.Profile = chosenProfile
 	updated.SetupCompleted = true
 
+	fmt.Fprintln(out, "  "+theme.Dim("Memory target is soft; total process usage may exceed it."))
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %s %s configured! Tier: %s | Safe RAM Cap: %d MB | Hidden Neurons: %d | CPU Threads: %d\n",
+	fmt.Fprintf(out, "  %s %s configured! Tier: %s | RAM Target: %d MB | Hidden Neurons: %d | CPU Threads: %d\n",
 		theme.BoldGreen("✓"),
 		theme.Bold(chosenName),
 		theme.BoldCyan(chosenProfile.TierName),

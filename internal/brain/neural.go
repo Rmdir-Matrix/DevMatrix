@@ -374,10 +374,10 @@ func (nn *NeuralNet) PruneToMaxVocab(newMaxVocab int) {
 }
 
 type layerGrad struct {
-	dNorm1                []float32
-	dWQ, dWK, dWV, dWO    []float32
-	dNorm2                []float32
-	dW1, dB1, dW2, dB2    []float32
+	dNorm1             []float32
+	dWQ, dWK, dWV, dWO []float32
+	dNorm2             []float32
+	dW1, dB1, dW2, dB2 []float32
 }
 
 type gptGradAccum struct {
@@ -1350,12 +1350,25 @@ func writeFloat32Slice(w io.Writer, s []float32) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(s))); err != nil {
 		return err
 	}
-	buf := make([]byte, len(s)*4)
-	for i, v := range s {
-		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(v))
+	buf := make([]byte, 16*1024)
+	for start := 0; start < len(s); {
+		n := len(s) - start
+		if n > len(buf)/4 {
+			n = len(buf) / 4
+		}
+		for i := 0; i < n; i++ {
+			binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(s[start+i]))
+		}
+		written, err := w.Write(buf[:n*4])
+		if err != nil {
+			return err
+		}
+		if written != n*4 {
+			return io.ErrShortWrite
+		}
+		start += n
 	}
-	_, err := w.Write(buf)
-	return err
+	return nil
 }
 
 func readFloat32Slice(r io.Reader) ([]float32, error) {
@@ -1366,13 +1379,20 @@ func readFloat32Slice(r io.Reader) ([]float32, error) {
 	if n > 50_000_000 {
 		return nil, fmt.Errorf("tensor slice too large: %d", n)
 	}
-	buf := make([]byte, int(n)*4)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
-	}
 	out := make([]float32, int(n))
-	for i := range out {
-		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4 : (i+1)*4]))
+	buf := make([]byte, 16*1024)
+	for start := 0; start < len(out); {
+		count := len(out) - start
+		if count > len(buf)/4 {
+			count = len(buf) / 4
+		}
+		if _, err := io.ReadFull(r, buf[:count*4]); err != nil {
+			return nil, err
+		}
+		for i := 0; i < count; i++ {
+			out[start+i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
+		}
+		start += count
 	}
 	return out, nil
 }

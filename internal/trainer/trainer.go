@@ -163,6 +163,10 @@ func RunLoop(
 				rep.VocabSize, rep.SmoothedLoss, rep.ActiveSynapses, rep.NewLevel)),
 		)
 
+		if rep.GrowthMessage != "" {
+			fmt.Fprintf(out, "  🧬 Model grew: %s\n", rep.GrowthMessage)
+		}
+
 		crossed := detectCrossedMilestone(rep.OldLevel, rep.NewLevel)
 		if wasFreshStart {
 			spokenFirst = true

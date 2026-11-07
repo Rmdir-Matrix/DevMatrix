@@ -146,7 +146,7 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 	fmt.Fprintf(out, "  CPU Cores       : %d\n", hw.CPUCores)
 	fmt.Fprintf(out, "  Total RAM       : %s (auto-detected: %v)\n", specs.FormatRAM(hw.TotalRAMMB), hw.Detected)
 	fmt.Fprintf(out, "  Available RAM   : %s\n", specs.FormatRAM(hw.AvailableRAMMB))
-	fmt.Fprintf(out, "  Recommended Cap : %d MB (%s Tier)\n", prof.RAMBudgetMB, prof.TierName)
+	fmt.Fprintf(out, "  Memory Target   : %d MB (%s Tier)\n", prof.RAMBudgetMB, prof.TierName)
 	fmt.Fprintf(out, "  GPT Capacity    : %d layers × %d heads • %dD embed • %d FFN • %d max vocab • %d threads\n",
 		prof.NumLayers, prof.NumHeads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
 }

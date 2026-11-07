@@ -35,7 +35,7 @@ type ComputeProfile struct {
 	EmbedDim      int    `json:"embed_dim"`
 	HiddenNeurons int    `json:"hidden_neurons"` // FFN intermediate dimension (4 * EmbedDim)
 	MaxVocab      int    `json:"max_vocab"`
-	MaxPassages   int    `json:"max_passages"`   // Replay buffer sequence cap
+	MaxPassages   int    `json:"max_passages"` // Replay buffer sequence cap
 	BatchSize     int    `json:"batch_size"`
 	WorkerThreads int    `json:"worker_threads"`
 }
@@ -67,8 +67,8 @@ func DetectHardware() HardwareInfo {
 	}
 }
 
-// RecommendBudgetFromSystemRAM calculates a safe memory ceiling (~20% of available RAM,
-// or ~15% of total RAM) so Matrix never overwhelms the host system.
+// RecommendBudgetFromSystemRAM calculates a soft memory target from available and total RAM.
+// Actual process usage can exceed the target.
 func RecommendBudgetFromSystemRAM(totalRAMMB, availRAMMB int) int {
 	base := int(float64(totalRAMMB) * 0.15)
 	if availRAMMB > 0 {
@@ -76,6 +76,11 @@ func RecommendBudgetFromSystemRAM(totalRAMMB, availRAMMB int) int {
 		if fromAvail < base || base == 0 {
 			base = fromAvail
 		}
+	}
+
+	// Keep the automatic budget gentle even when a 4 GB machine is mostly idle.
+	if totalRAMMB > 0 && totalRAMMB <= 4096 && base > 512 {
+		base = 512
 	}
 
 	// Round to clean 32 MB steps
@@ -103,7 +108,7 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		budget = MinRAMBudgetMB
 	}
 
-	// Safety guard: never allow budget to exceed 75% of detected total RAM (or 80% of available if reasonable)
+	// Clamp the target to 75% of detected total RAM. This does not enforce a hard limit.
 	if hw.Detected && hw.TotalRAMMB > 0 {
 		safeCap := int(float64(hw.TotalRAMMB) * 0.75)
 		if safeCap < MinRAMBudgetMB {
@@ -196,7 +201,8 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 	}
 }
 
-// ApplyRuntimeLimits enforces the compute profile's RAM ceiling and thread count in the Go runtime.
+// ApplyRuntimeLimits sets a Go runtime soft memory target and thread count.
+// It is not an operating-system hard limit and does not bound total process memory.
 func ApplyRuntimeLimits(profile ComputeProfile) {
 	if profile.WorkerThreads > 0 {
 		runtime.GOMAXPROCS(profile.WorkerThreads)

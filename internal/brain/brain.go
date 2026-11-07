@@ -44,29 +44,34 @@ type TrainReport struct {
 	LeveledUp      bool
 	ActiveSynapses int
 	VocabSize      int
+	GrowthMessage  string
 }
 
 // Brain holds Matrix's Closed-Book Multi-Layer, Multi-Head GPT Transformer and training telemetry.
 // ZERO text/definition/passage lookup databases exist inside Brain — 100% of knowledge lives in Net weights!
 type Brain struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	CreatedAt     string           `json:"created_at"`
-	UpdatedAt     string           `json:"updated_at"`
-	Level         int              `json:"level"`
-	XP            int64            `json:"xp"`
-	ArticlesRead  int              `json:"articles_read"`
-	TokensTrained int64            `json:"tokens_trained"`
-	SmoothedLoss  float64          `json:"smoothed_loss"`
-	MaxReplay     int              `json:"max_replay"`
-	BatchSize     int              `json:"batch_size"`
-	WorkerThreads int              `json:"worker_threads"`
-	TopicCounts   map[string]int   `json:"topic_counts"`
-	SeenSources   map[string]bool  `json:"seen_sources"`
-	RecentTitles  []string         `json:"recent_titles"`
-	CoreReplay    []TrainingSample `json:"core_replay,omitempty"`   // training-only SGD replay (never used at inference)
-	RecentReplay  []TrainingSample `json:"recent_replay,omitempty"` // training-only SGD replay (never used at inference)
-	Net           *NeuralNet       `json:"-"`
+	ID             string           `json:"id"`
+	Name           string           `json:"name"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
+	Level          int              `json:"level"`
+	XP             int64            `json:"xp"`
+	ArticlesRead   int              `json:"articles_read"`
+	TokensTrained  int64            `json:"tokens_trained"`
+	SmoothedLoss   float64          `json:"smoothed_loss"`
+	MaxReplay      int              `json:"max_replay"`
+	BatchSize      int              `json:"batch_size"`
+	WorkerThreads  int              `json:"worker_threads"`
+	TopicCounts    map[string]int   `json:"topic_counts"`
+	SeenSources    map[string]bool  `json:"seen_sources"`
+	RecentTitles   []string         `json:"recent_titles"`
+	CoreReplay     []TrainingSample `json:"core_replay,omitempty"`   // training-only SGD replay (never used at inference)
+	RecentReplay   []TrainingSample `json:"recent_replay,omitempty"` // training-only SGD replay (never used at inference)
+	TrainingItems  int              `json:"training_items,omitempty"`
+	GrowthEvents   int              `json:"growth_events,omitempty"`
+	GrowthMaxWidth int              `json:"-"`
+	GrowthRAMMB    int              `json:"-"`
+	Net            *NeuralNet       `json:"-"`
 }
 
 // NewBrain initializes a brand-new Level 1 Closed-Book GPT Matrix sized to ComputeProfile.
@@ -99,25 +104,29 @@ func NewBrain(name string, prof specs.ComputeProfile) *Brain {
 	}
 
 	return &Brain{
-		ID:            randomHexID(4),
-		Name:          strings.TrimSpace(name),
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		Level:         1,
-		XP:            0,
-		SmoothedLoss:  0,
-		MaxReplay:     maxRep,
-		BatchSize:     batchSz,
-		WorkerThreads: workers,
-		TopicCounts:   make(map[string]int),
-		SeenSources:   make(map[string]bool),
-		Net:           NewNeuralNet(layers, heads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, seed),
+		ID:             randomHexID(4),
+		Name:           strings.TrimSpace(name),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Level:          1,
+		XP:             0,
+		SmoothedLoss:   0,
+		MaxReplay:      maxRep,
+		BatchSize:      batchSz,
+		WorkerThreads:  workers,
+		GrowthMaxWidth: prof.HiddenNeurons * 4,
+		GrowthRAMMB:    prof.RAMBudgetMB,
+		TopicCounts:    make(map[string]int),
+		SeenSources:    make(map[string]bool),
+		Net:            NewNeuralNet(layers, heads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, seed),
 	}
 }
 
 // ApplyProfileCaps adapts training buffers AND prunes vocabulary tensors safely
 // when loading or importing a Matrix onto lower-RAM hardware.
 func (b *Brain) ApplyProfileCaps(prof specs.ComputeProfile) {
+	b.GrowthRAMMB = prof.RAMBudgetMB
+	b.GrowthMaxWidth = prof.HiddenNeurons * 4
 	if prof.MaxPassages >= 128 {
 		b.MaxReplay = prof.MaxPassages
 	}
@@ -378,6 +387,14 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainReport {
 	b.Level = LevelFromXP(b.XP)
 	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
+	var growthMessage string
+	if validEpochs > 0 && len(docSamples) > 0 {
+		b.TrainingItems++
+		if msg, grown := b.TryGrow(); grown {
+			growthMessage = msg
+		}
+	}
+
 	return TrainReport{
 		ArticleTitle:   art.Title,
 		ArticleExcerpt: firstExcerpt,
@@ -392,6 +409,7 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainReport {
 		LeveledUp:      b.Level > oldLevel,
 		ActiveSynapses: b.Net.ActiveSynapses(),
 		VocabSize:      b.Net.LearnedWordCount(),
+		GrowthMessage:  growthMessage,
 	}
 }
 
@@ -516,31 +534,39 @@ func XPForLevel(targetLevel int) int64 {
 	return d * d * 70
 }
 
-// MarshalCompactBinary serializes Brain metadata + IEEE-754 float32 GPT Transformer tensors.
-// Zero stored passages or dictionary text exist in the checkpoint!
+// writeCompactBinary streams a checkpoint without buffering all tensor data.
+func (b *Brain) writeCompactBinary(w io.Writer) error {
+	if _, err := io.WriteString(w, binaryMagicHeader); err != nil {
+		return err
+	}
+	meta, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(meta))); err != nil {
+		return err
+	}
+	if _, err := w.Write(meta); err != nil {
+		return err
+	}
+	return b.Net.WriteBinary(w)
+}
+
+// MarshalCompactBinary serializes Brain metadata and float32 tensors.
 func (b *Brain) MarshalCompactBinary() ([]byte, error) {
 	var out bytes.Buffer
-	out.WriteString(binaryMagicHeader)
-
-	metaBytes, err := json.Marshal(b)
-	if err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&out, binary.LittleEndian, uint32(len(metaBytes))); err != nil {
-		return nil, err
-	}
-	if _, err := out.Write(metaBytes); err != nil {
-		return nil, err
-	}
-	if err := b.Net.WriteBinary(&out); err != nil {
+	if err := b.writeCompactBinary(&out); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
 }
 
-// UnmarshalCompactBinary reconstructs a Closed-Book GPT Brain from compact binary format.
+// UnmarshalCompactBinary reconstructs a model from compact binary format.
 func UnmarshalCompactBinary(data []byte) (*Brain, error) {
-	r := bytes.NewReader(data)
+	return readCompactBinary(bytes.NewReader(data))
+}
+
+func readCompactBinary(r io.Reader) (*Brain, error) {
 	magic := make([]byte, 4)
 	if _, err := io.ReadFull(r, magic); err != nil {
 		return nil, err
@@ -581,11 +607,6 @@ func (b *Brain) Save(dataDir string) error {
 		return err
 	}
 
-	raw, err := b.MarshalCompactBinary()
-	if err != nil {
-		return err
-	}
-
 	target := BrainFilePath(dataDir, b.Name)
 	tmp := target + ".tmp"
 	f, err := os.Create(tmp)
@@ -594,7 +615,7 @@ func (b *Brain) Save(dataDir string) error {
 	}
 
 	gw, _ := gzip.NewWriterLevel(f, gzip.BestSpeed)
-	if _, err := gw.Write(raw); err != nil {
+	if err := b.writeCompactBinary(gw); err != nil {
 		_ = gw.Close()
 		_ = f.Close()
 		return err
@@ -623,12 +644,11 @@ func LoadFile(filePath string, prof specs.ComputeProfile) (*Brain, error) {
 	}
 	defer gr.Close()
 
-	payload, err := io.ReadAll(gr)
+	loaded, err := readCompactBinary(gr)
 	if err != nil {
 		return nil, err
 	}
-	loaded, err := UnmarshalCompactBinary(payload)
-	if err != nil {
+	if _, err := io.Copy(io.Discard, gr); err != nil {
 		return nil, err
 	}
 	loaded.ApplyProfileCaps(prof)

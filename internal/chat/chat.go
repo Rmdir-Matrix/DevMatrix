@@ -34,7 +34,7 @@ func RunInteractive(
 		theme.Cyan("•"), theme.BoldGreen(b.Name), b.Level,
 		trainer.IntelligenceStage(b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal),
 		b.Net.NumLayers, b.Net.NumHeads, b.Net.LearnedWordCount(), b.Net.ActiveSynapses())
-	fmt.Fprintln(out, "  "+theme.Dim("Tools: /define <word> • /study <topic> • /quiz [topic] • remember: <fact> • /clear • /brain • /train • /back"))
+	fmt.Fprintln(out, "  "+theme.Dim("Tools: /define <word> • /study <topic> • /quiz [topic] • remember: <fact> • /clear • /brain • /grow • /train • /back"))
 	fmt.Fprintln(out)
 
 	var history []brain.ChatTurn
@@ -80,6 +80,17 @@ func RunInteractive(
 			fmt.Fprintf(out, "  %s Level %d | GPT: %d Layers × %d Heads (%dD → %d FFN) | Vocab: %d/%d | Synapses: %d | Loss: %.4f\n",
 				theme.Cyan("[GPT Stats]"), b.Level, b.Net.NumLayers, b.Net.NumHeads, b.Net.EmbedDim,
 				b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab, b.Net.ActiveSynapses(), b.SmoothedLoss)
+			fmt.Fprintf(out, "  Parameters: %d | Growth: %d milestones used / %d earned | FFN width limit: %d\n", b.Net.ParameterCount(), b.GrowthEvents, b.TrainingItems/8, b.GrowthMaxWidth)
+			continue
+		}
+		if lower == "/grow" {
+			msg, grown := b.TryGrow()
+			fmt.Fprintf(out, "  Growth: %s\n", msg)
+			if grown {
+				if err := b.Save(dataDir); err != nil {
+					fmt.Fprintf(out, "  Save failed: %v\n", err)
+				}
+			}
 			continue
 		}
 		if strings.HasPrefix(lower, "/summary") || strings.HasPrefix(lower, "/topics") {
