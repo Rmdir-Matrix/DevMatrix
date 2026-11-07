@@ -35,6 +35,14 @@ type KnowledgePassage struct {
 	Embedding  []float32 `json:"-"`
 }
 
+// LearnedQA stores a trained Q&A / dialogue pair in bounded LRU memory for <ctx> neural RAG.
+type LearnedQA struct {
+	Prompt     []string  `json:"prompt"`
+	Response   []string  `json:"response"`
+	AccessTick int64     `json:"access_tick"`
+	Embedding  []float32 `json:"-"`
+}
+
 // DictEntry stores a learned word definition in bounded, LRU-evicting lexical memory.
 type DictEntry struct {
 	Word       string `json:"word"`
@@ -82,6 +90,7 @@ type Brain struct {
 	RecentTitles   []string                `json:"recent_titles"`
 	Dictionary     map[string]DictEntry    `json:"dictionary"`
 	Passages       []KnowledgePassage      `json:"passages"`
+	LearnedQAs     []LearnedQA             `json:"learned_qas,omitempty"`
 	CoreReplay     []TrainingSample        `json:"core_replay,omitempty"`
 	RecentReplay   []TrainingSample        `json:"recent_replay,omitempty"`
 	Net            *NeuralNet              `json:"-"`
@@ -279,13 +288,25 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainReport {
 		pIDs := b.Net.RegisterTokens(pToks, rng)
 		rIDs := b.Net.RegisterTokens(rToks, rng)
 
+		if len(qa.Context) == 0 {
+			// Train BOTH with <ctx> (for RAG Pointer-Generator grounding) AND without <ctx>
+			if cSeq, cLs, cOk := packRAGSample(rIDs, pIDs, rIDs); cOk {
+				samples = append(samples, TrainingSample{IDs: cSeq, LossStart: cLs})
+			}
+			b.storeLearnedQA(pToks, rToks)
+		}
 		if seq, ls, ok := packRAGSample(ctxIDs, pIDs, rIDs); ok {
 			smp := TrainingSample{IDs: seq, LossStart: ls}
 			reps := 1
 			if isCurriculum {
-				reps = 3
-				if len(qa.Context) == 0 && len(b.CoreReplay) < 96 {
+				reps = 2
+				if len(qa.Context) == 0 && len(b.CoreReplay) < 128 {
 					b.CoreReplay = append(b.CoreReplay, smp)
+				}
+				if len(pToks) >= 3 && ((pToks[0] == "my" && pToks[1] == "name" && pToks[2] == "is") || (pToks[0] == "call" && pToks[1] == "me")) {
+					unkPromptToks := append([]string(nil), pToks[:len(pToks)-1]...)
+					unkPromptToks = append(unkPromptToks, unkToken)
+					b.storeLearnedQA(unkPromptToks, rToks)
 				}
 			}
 			for r := 0; r < reps; r++ {
@@ -361,8 +382,8 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainReport {
 		b.SmoothedLoss = 0.80*b.SmoothedLoss + 0.20*avgLoss
 	}
 
-	// Index domain passages with updated neural embeddings for RAG retrieval & active-recall quizzes
-	if !isCurriculum {
+	// Index domain passages ONLY for real articles & notes (never raw dictionary chapters or grammar!)
+	if !isCurriculum && !isDict {
 		b.storeArticlePassages(art, parsed.Sentences)
 	}
 
@@ -482,6 +503,97 @@ func (b *Brain) storeArticlePassages(art corpus.Article, sentences []string) {
 		}
 	}
 	b.evictPassagesToCap()
+}
+
+func (b *Brain) storeLearnedQA(promptToks, respToks []string) {
+	if len(promptToks) == 0 || len(respToks) == 0 {
+		return
+	}
+	b.ClockTick++
+	pKey := strings.Join(promptToks, " ")
+	emb := b.Net.EmbedText(pKey)
+	for i := range b.LearnedQAs {
+		if strings.Join(b.LearnedQAs[i].Prompt, " ") == pKey {
+			b.LearnedQAs[i].Response = append([]string(nil), respToks...)
+			b.LearnedQAs[i].AccessTick = b.ClockTick
+			b.LearnedQAs[i].Embedding = emb
+			return
+		}
+	}
+	b.LearnedQAs = append(b.LearnedQAs, LearnedQA{
+		Prompt:     append([]string(nil), promptToks...),
+		Response:   append([]string(nil), respToks...),
+		AccessTick: b.ClockTick,
+		Embedding:  emb,
+	})
+	const maxQAs = 512
+	if len(b.LearnedQAs) > maxQAs {
+		sort.SliceStable(b.LearnedQAs, func(i, j int) bool {
+			return b.LearnedQAs[i].AccessTick < b.LearnedQAs[j].AccessTick
+		})
+		b.LearnedQAs = append([]LearnedQA(nil), b.LearnedQAs[len(b.LearnedQAs)-maxQAs:]...)
+	}
+}
+
+// MatchLearnedQA retrieves the closest trained QA response subwords when token overlap + similarity match.
+func (b *Brain) MatchLearnedQA(promptSubwords []string) ([]string, bool) {
+	if len(b.LearnedQAs) == 0 || len(promptSubwords) == 0 {
+		return nil, false
+	}
+	// Strip punctuation from query subwords
+	var cleanQ []string
+	for _, sw := range promptSubwords {
+		if isAlphaNumericToken(sw) || sw == unkToken {
+			cleanQ = append(cleanQ, sw)
+		}
+	}
+	if len(cleanQ) == 0 {
+		return nil, false
+	}
+
+	bestScore := 0.0
+	bestIdx := -1
+	for i := range b.LearnedQAs {
+		cand := b.LearnedQAs[i].Prompt
+		if len(cand) == 0 {
+			continue
+		}
+		// Compute positional + bag F1 overlap (treating <unk> in pattern as wildcard for proper-name slot!)
+		matches := 0
+		posMatches := 0
+		used := make([]bool, len(cand))
+		for qi, qt := range cleanQ {
+			for ci, ct := range cand {
+				if !used[ci] && (ct == qt || (ct == unkToken && qi >= 2)) {
+					used[ci] = true
+					matches++
+					if qi == ci {
+						posMatches++
+					}
+					break
+				}
+			}
+		}
+		if matches == 0 {
+			continue
+		}
+		prec := float64(matches) / float64(len(cleanQ))
+		rec := float64(matches) / float64(len(cand))
+		f1 := (2 * prec * rec) / (prec + rec)
+		posBonus := 0.15 * (float64(posMatches) / float64(maxInt(len(cleanQ), len(cand))))
+		score := f1 + posBonus
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+
+	if bestIdx >= 0 && bestScore >= 0.72 {
+		b.ClockTick++
+		b.LearnedQAs[bestIdx].AccessTick = b.ClockTick
+		return append([]string(nil), b.LearnedQAs[bestIdx].Response...), true
+	}
+	return nil, false
 }
 
 func (b *Brain) evictPassagesToCap() {

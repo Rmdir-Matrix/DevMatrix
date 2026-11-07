@@ -48,6 +48,13 @@ func TestDictionariesFirstThenGrammarAndFullVocabNeuralChat(t *testing.T) {
 			knownHAY, hayReason, hayReply)
 	}
 
+	// Verify introducing a random name responds conversationally instead of reciting article/dictionary definitions
+	introReply, knownIntro, introReason := Respond(b, "my name is Rmdir")
+	if !knownIntro || !strings.Contains(strings.ToLower(introReply), "nice") {
+		t.Fatalf("expected conversational greeting on 'my name is Rmdir', got known=%v reason=%q reply=%q",
+			knownIntro, introReason, introReply)
+	}
+
 	// Teach/verify specific lexicon word via /define flow
 	hypoArt, err := cr.FetchDictionaryEntry(context.Background(), "hypothesis")
 	if err != nil {

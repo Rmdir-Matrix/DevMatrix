@@ -41,8 +41,8 @@ func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
 		return "", false, "I could not parse any known words from that input."
 	}
 
-	// 2. Retrieve relevant <ctx> subwords from learned Dictionary or Semantic Passages
-	ctxSubwords := b.retrieveContextSubwords(trimmed)
+	// 2. Retrieve relevant <ctx> subwords from learned QAs, Dictionary, or Semantic Passages
+	ctxSubwords := b.retrieveContextSubwords(trimmed, promptSubwords)
 
 	// 3. Build neural conditioning sequence: [<ctx> ctxSubwords] <ask> promptSubwords <ans>
 	askSub := promptSubwords
@@ -171,8 +171,20 @@ func (b *Brain) GenerateThoughtFromWeights(recentTitle, recentExcerpt string) st
 	return DetokenizeSubwords(outTokens, b.Name)
 }
 
-func (b *Brain) retrieveContextSubwords(userInput string) []string {
+func (b *Brain) retrieveContextSubwords(userInput string, promptSubwords []string) []string {
+	// 0. Check learned dialogue / flashcard QA memory first (populated ONLY as Matrix trains!)
+	if qaResp, ok := b.MatchLearnedQA(promptSubwords); ok {
+		return qaResp
+	}
+
 	lower := strings.ToLower(strings.TrimSpace(userInput))
+
+	// Do not trigger open-book dictionary/article retrieval on personal/social conversational turns
+	// so Matrix never defines the user's own name or greeting words from encyclopedia articles!
+	if isConversationalTurn(lower) {
+		return nil
+	}
+
 	kws := ExtractKeywords(userInput, 6)
 
 	isDefAsk := strings.HasPrefix(lower, "define ") ||
@@ -205,15 +217,14 @@ func (b *Brain) retrieveContextSubwords(userInput string) []string {
 	if len(kws) > 0 {
 		searchQuery := strings.Join(kws, " ")
 		hits := b.SearchPassagesWithScore(searchQuery, 2)
-		if len(hits) > 0 && hits[0].Score >= 0.32 {
-			// For multi-keyword queries, verify topical relevance
-			if len(kws) == 1 || hits[0].Score >= 0.45 {
+		if len(hits) > 0 && hits[0].Score >= 0.42 {
+			if len(kws) == 1 || hits[0].Score >= 0.50 {
 				return SubwordTokenize(hits[0].Passage.Text)
 			}
 		}
 	}
 
-	// 3. Fallback to dictionary entry ONLY when prompt is a question or concept inquiry (not bare greetings)
+	// 3. Fallback to dictionary entry ONLY when prompt is a question or concept inquiry
 	isInquiry := strings.Contains(lower, "?") ||
 		strings.HasPrefix(lower, "what ") ||
 		strings.HasPrefix(lower, "explain ") ||
@@ -225,6 +236,29 @@ func (b *Brain) retrieveContextSubwords(userInput string) []string {
 		}
 	}
 	return nil
+}
+
+// isConversationalTurn prevents RAG article/dictionary lookup from hijacking social dialogue
+// (note: this NEVER generates a reply — the neural network still must have learned the words & weights!).
+func isConversationalTurn(lower string) bool {
+	clean := strings.Trim(lower, ".,!?;: ")
+	socialPrefixes := []string{
+		"my name is ", "call me ", "i am ", "i'm ",
+		"how are you", "how is it going", "how's it going",
+		"nice to meet", "good morning", "good afternoon", "good evening",
+		"thank you", "thanks", "hello", "hi", "hey", "goodbye", "bye",
+		"who are you", "what is your name", "what are you doing",
+	}
+	for _, p := range socialPrefixes {
+		if clean == strings.TrimSpace(p) || strings.HasPrefix(clean, p) {
+			// Still allow genuine academic questions like "i am studying photosynthesis, explain it"
+			if strings.Contains(clean, "explain") || strings.Contains(clean, "define") {
+				return false
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Brain) decodeAutoregressive(

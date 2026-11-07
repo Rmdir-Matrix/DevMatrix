@@ -246,7 +246,7 @@ func EncodeWithVocab(text string, selfName string, knows func(tok string) bool) 
 	var out []string
 	var unknown []string
 
-	for _, w := range raw {
+	for idx, w := range raw {
 		if w == selfLower || w == "matrix" || w == selfToken {
 			out = append(out, selfToken)
 			continue
@@ -255,6 +255,14 @@ func EncodeWithVocab(text string, selfName string, knows func(tok string) bool) 
 			if knows(w) {
 				out = append(out, w)
 			}
+			continue
+		}
+		// If user introduces a proper name after "name is" or "call me" and those grammar words
+		// are already learned, encode unseen proper names as <unk> instead of demanding /define!
+		isIntroNameSlot := (idx >= 2 && raw[idx-2] == "name" && raw[idx-1] == "is" && knows("name") && knows("is")) ||
+			(idx >= 2 && raw[idx-2] == "call" && raw[idx-1] == "me" && knows("call") && knows("me"))
+		if isIntroNameSlot && !knows(w) {
+			out = append(out, unkToken)
 			continue
 		}
 		if knows(w) {
