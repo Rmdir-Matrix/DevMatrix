@@ -41,9 +41,9 @@ func TestExportAndImportMatrixWithCustomNameAndLowRAMPruning(t *testing.T) {
 	if imported.Name != "QuantumBuddy" || sum.ExportedName != "QuantumBuddy" {
 		t.Fatalf("expected exported name QuantumBuddy, got brain=%q summary=%q", imported.Name, sum.ExportedName)
 	}
-	if imported.Net.MaxVocab != featherProf.MaxVocab || imported.MaxPassages != featherProf.MaxPassages {
-		t.Fatalf("expected Featherweight caps (%d vocab, %d passages), got (%d vocab, %d passages)",
-			featherProf.MaxVocab, featherProf.MaxPassages, imported.Net.MaxVocab, imported.MaxPassages)
+	if imported.Net.MaxVocab != featherProf.MaxVocab || imported.MaxReplay != featherProf.MaxPassages {
+		t.Fatalf("expected Featherweight caps (%d vocab, %d replay), got (%d vocab, %d replay)",
+			featherProf.MaxVocab, featherProf.MaxPassages, imported.Net.MaxVocab, imported.MaxReplay)
 	}
 	if imported.Level != srcBrain.Level || imported.ArticlesRead != 1 {
 		t.Fatalf("imported stats mismatch: lvl=%d articles=%d", imported.Level, imported.ArticlesRead)

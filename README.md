@@ -1,6 +1,6 @@
 # Matrix — On-Device AI Study Buddy CLI
 
-**Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). A brand-new Matrix starts at **0 words** and **0 active synapses** with **zero hardcoded answers**: when you turn it on, it trains an on-device **Causal Self-Attention + GRU + Differentiable Pointer-Generator neural language model** via multi-threaded **AdamW backpropagation through time (BPTT)** — learning **dictionaries first**, then **English grammar**, and then **real multi-source articles**.
+**Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). Like a miniature on-device ChatGPT, Matrix uses a **100% Closed-Book Multi-Layer, Multi-Head Decoder-Only GPT Transformer** (`Pre-RMSNorm` + `Multi-Head Causal Self-Attention` + `SiLU Feed-Forward MLP` + `Exact Full-Vocabulary Weight-Tied Softmax`). Zero text databases, zero passage lookup tables, and zero RAG retrieval are used at chat time — **every word Matrix speaks comes strictly out of its trained Transformer `float32` weights**.
 
 ---
 
@@ -26,10 +26,10 @@ Useful startup flags:
 
 ## Architecture & Key Features
 
-### 1. Real Sequence Neural Architecture & Multi-Core AdamW
-- **Causal Scaled Dot-Product Self-Attention + GRU + Pointer-Generator Copy-Attention**: Decodes autoregressively across the **entire learned vocabulary** via Top-K / Top-P nucleus sampling (zero n-gram lookup tables, zero hardcoded reply maps, zero `fmt.Sprintf` thought templates).
-- **Subword Morpheme / WordPiece Tokenization**: Shares root representations across inflected forms (`learn`, `learning`, `learned`) and detects out-of-vocabulary words + high neural perplexity without any hardcoded conversational word list.
-- **Multi-Goroutine Mini-Batch AdamW + Experience Replay**: Scales `BatchSize` and `WorkerThreads` directly to your hardware profile while tracking genuinely gradient-updated synaptic weights (`0` at birth).
+### 1. Closed-Book Decoder-Only GPT Architecture & Multi-Core AdamW
+- **Multi-Layer, Multi-Head Causal Transformer (`GPT`)**: Stacked Pre-RMSNorm Transformer blocks (`WQ, WK, WV, WO` multi-head causal self-attention + `W1, W2` SiLU feed-forward key-value memory layers) with exact full-vocabulary cross-entropy backpropagation and zero inference-time lookup tables.
+- **Subword Morpheme / WordPiece Tokenization**: Shares root representations across inflected forms (`learn`, `learning`, `learned`) and detects out-of-vocabulary words + high GPT perplexity without any hardcoded conversational word list.
+- **Multi-Goroutine Mini-Batch AdamW**: Scales Transformer depth (`2–4 layers`), attention heads (`4–6 heads`), embedding/FFN width, `BatchSize`, and `WorkerThreads` directly to your hardware profile while tracking genuinely gradient-updated synaptic weights (`0` at birth).
 
 ### 2. Automatic Hardware Detection & Safe RAM Caps
 On first launch, Matrix probes your system's **Total RAM**, **Available Free RAM**, and **CPU Cores** (`GlobalMemoryStatusEx` on Windows, `/proc/meminfo` + cgroups on Linux) and lets you choose:

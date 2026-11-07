@@ -93,31 +93,46 @@ func NewReader(dataDir string) (*Reader, error) {
 	dictIndex := make(map[string]lexiconEntry, 5000)
 	totalWords := 0
 
-	for _, ch := range rawChapters {
+	formatEntries := func(entries []lexiconEntry) string {
 		var sb strings.Builder
-		for _, e := range ch.Entries {
-			dictIndex[e.Word] = e
-			totalWords++
+		for _, e := range entries {
 			if e.Example != "" {
 				fmt.Fprintf(&sb, "DICT: %s | %s | %s | %s\n", e.Word, e.POS, e.Def, e.Example)
 			} else {
 				fmt.Fprintf(&sb, "DICT: %s | %s | %s\n", e.Word, e.POS, e.Def)
 			}
 		}
-		srcPrefix := "dictionary:ext"
-		if ch.Tier == "core" {
-			srcPrefix = "dictionary:core"
+		return sb.String()
+	}
+
+	coreIdx := 1
+	for _, ch := range rawChapters {
+		for _, e := range ch.Entries {
+			dictIndex[e.Word] = e
+			totalWords++
 		}
-		art := Article{
-			Title:   ch.Title,
-			Topic:   "English Dictionary",
-			Source:  fmt.Sprintf("%s-%02d", srcPrefix, ch.Chapter),
-			Content: sb.String(),
-		}
-		if ch.Tier == "core" {
-			coreDicts = append(coreDicts, art)
+		// Chapters 1..3 hold the 240 curated foundational everyday & academic words;
+		// split into 6 focused 40-word Phase-1 lessons for closed-book GPT weight memorization.
+		if ch.Chapter <= 3 && len(ch.Entries) >= 40 {
+			mid := len(ch.Entries) / 2
+			halves := [][]lexiconEntry{ch.Entries[:mid], ch.Entries[mid:]}
+			for _, h := range halves {
+				preview := h[0].Word + ", " + h[1].Word + ", " + h[2].Word
+				coreDicts = append(coreDicts, Article{
+					Title:   fmt.Sprintf("Core English Lexicon %d (%s...)", coreIdx, preview),
+					Topic:   "English Dictionary",
+					Source:  fmt.Sprintf("dictionary:core-%02d", coreIdx),
+					Content: formatEntries(h),
+				})
+				coreIdx++
+			}
 		} else {
-			extDicts = append(extDicts, art)
+			extDicts = append(extDicts, Article{
+				Title:   ch.Title,
+				Topic:   "English Dictionary",
+				Source:  fmt.Sprintf("dictionary:ext-%02d", ch.Chapter),
+				Content: formatEntries(ch.Entries),
+			})
 		}
 	}
 

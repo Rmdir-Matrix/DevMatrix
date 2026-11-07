@@ -26,14 +26,16 @@ type HardwareInfo struct {
 	Detected       bool   `json:"detected"`
 }
 
-// ComputeProfile defines the safe memory budget and neural model sizing derived from specs.
+// ComputeProfile defines the safe memory budget and GPT Transformer sizing derived from specs.
 type ComputeProfile struct {
 	TierName      string `json:"tier_name"`
 	RAMBudgetMB   int    `json:"ram_budget_mb"`
+	NumLayers     int    `json:"num_layers"`
+	NumHeads      int    `json:"num_heads"`
 	EmbedDim      int    `json:"embed_dim"`
-	HiddenNeurons int    `json:"hidden_neurons"`
+	HiddenNeurons int    `json:"hidden_neurons"` // FFN intermediate dimension (4 * EmbedDim)
 	MaxVocab      int    `json:"max_vocab"`
-	MaxPassages   int    `json:"max_passages"`
+	MaxPassages   int    `json:"max_passages"`   // Replay buffer sequence cap
 	BatchSize     int    `json:"batch_size"`
 	WorkerThreads int    `json:"worker_threads"`
 }
@@ -126,10 +128,12 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		return ComputeProfile{
 			TierName:      "Featherweight",
 			RAMBudgetMB:   budget,
-			EmbedDim:      24,
-			HiddenNeurons: 48,
+			NumLayers:     2,
+			NumHeads:      4,
+			EmbedDim:      48,
+			HiddenNeurons: 192,
 			MaxVocab:      4096,
-			MaxPassages:   400,
+			MaxPassages:   256,
 			BatchSize:     8,
 			WorkerThreads: 1,
 		}, warning
@@ -138,11 +142,13 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		return ComputeProfile{
 			TierName:      "Lite",
 			RAMBudgetMB:   budget,
-			EmbedDim:      32,
-			HiddenNeurons: 96,
+			NumLayers:     2,
+			NumHeads:      4,
+			EmbedDim:      64,
+			HiddenNeurons: 256,
 			MaxVocab:      8192,
-			MaxPassages:   1200,
-			BatchSize:     16,
+			MaxPassages:   384,
+			BatchSize:     12,
 			WorkerThreads: minInt(cores, 2),
 		}, warning
 
@@ -150,11 +156,13 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		return ComputeProfile{
 			TierName:      "Balanced",
 			RAMBudgetMB:   budget,
-			EmbedDim:      48,
-			HiddenNeurons: 160,
+			NumLayers:     3,
+			NumHeads:      4,
+			EmbedDim:      80,
+			HiddenNeurons: 320,
 			MaxVocab:      16384,
-			MaxPassages:   3500,
-			BatchSize:     24,
+			MaxPassages:   640,
+			BatchSize:     16,
 			WorkerThreads: minInt(cores, 4),
 		}, warning
 
@@ -162,11 +170,13 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		return ComputeProfile{
 			TierName:      "Performance",
 			RAMBudgetMB:   budget,
-			EmbedDim:      64,
-			HiddenNeurons: 256,
+			NumLayers:     4,
+			NumHeads:      4,
+			EmbedDim:      112,
+			HiddenNeurons: 448,
 			MaxVocab:      30000,
-			MaxPassages:   8000,
-			BatchSize:     32,
+			MaxPassages:   1024,
+			BatchSize:     24,
 			WorkerThreads: minInt(cores, 6),
 		}, warning
 
@@ -174,11 +184,13 @@ func BuildProfile(hw HardwareInfo, requestedBudgetMB int) (ComputeProfile, strin
 		return ComputeProfile{
 			TierName:      "Ultra",
 			RAMBudgetMB:   budget,
-			EmbedDim:      96,
-			HiddenNeurons: 384,
+			NumLayers:     4,
+			NumHeads:      6,
+			EmbedDim:      144,
+			HiddenNeurons: 576,
 			MaxVocab:      50000,
-			MaxPassages:   15000,
-			BatchSize:     48,
+			MaxPassages:   1536,
+			BatchSize:     32,
 			WorkerThreads: minInt(cores, 8),
 		}, warning
 	}

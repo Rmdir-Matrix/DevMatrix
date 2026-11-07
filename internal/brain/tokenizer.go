@@ -28,37 +28,26 @@ var productiveSuffixes = []string{
 	"ly", "ed", "es", "s",
 }
 
-// QAPair represents a prompt->response training pair parsed from training text.
-type QAPair struct {
-	Context  []string
+// SFTPair represents a pure closed-book (<user> prompt -> <assistant> response) training sequence.
+type SFTPair struct {
 	Prompt   []string
 	Response []string
 }
 
-// DictRecord represents a structured dictionary entry parsed from DICT: lines.
-type DictRecord struct {
-	Word       string
-	POS        string
-	Definition string
-	Example    string
-}
-
-// ParsedCorpusItem holds structured training sequences extracted from a document.
+// ParsedCorpusItem holds pretraining sentences and SFT instruction/dialogue pairs extracted from text.
 type ParsedCorpusItem struct {
-	Sentences   []string
-	QAPairs     []QAPair
-	DictRecords []DictRecord
+	Sentences []string
+	SFTPairs  []SFTPair
 }
 
-// ParseCorpusContent parses DICT: lines, QA: lines, and natural prose paragraphs without
-// injecting any synthetic thought strings.
+// ParseCorpusContent parses DICT: lines, QA: lines, and natural prose paragraphs into pure
+// GPT pretraining sentences + SFT pairs (zero lookup databases, zero synthetic thought strings).
 func ParseCorpusContent(text string) ParsedCorpusItem {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 
 	var item ParsedCorpusItem
 	var proseBuilder strings.Builder
-	dictIdx := 0
 
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
@@ -83,38 +72,20 @@ func ParseCorpusContent(text string) ParsedCorpusItem {
 						articleWord = "an"
 					}
 					defSent := word + " is " + articleWord + " " + pos + " meaning " + def + "."
+					proseBuilder.WriteString(defSent + "\n")
 					if ex != "" {
 						if !strings.HasSuffix(ex, ".") && !strings.HasSuffix(ex, "!") && !strings.HasSuffix(ex, "?") {
 							ex += "."
 						}
 						proseBuilder.WriteString(ex + "\n")
-					} else {
-						proseBuilder.WriteString(defSent + "\n")
 					}
-					item.DictRecords = append(item.DictRecords, DictRecord{
-						Word:       word,
-						POS:        pos,
-						Definition: defSent,
-						Example:    ex,
-					})
 					defToks := SubwordTokenize(defSent)
 					wToks := SubwordTokenize(word)
 					if len(wToks) > 0 && len(defToks) > 0 {
-						var askPrompt []string
-						switch dictIdx % 3 {
-						case 0:
-							askPrompt = append([]string{"define"}, wToks...)
-						case 1:
-							askPrompt = append(append([]string{"what", "does"}, wToks...), "mean")
-						default:
-							askPrompt = append([]string{"what", "is"}, wToks...)
-						}
-						dictIdx++
-						item.QAPairs = append(item.QAPairs, QAPair{
-							Context:  defToks,
-							Prompt:   askPrompt,
-							Response: defToks,
-						})
+						item.SFTPairs = append(item.SFTPairs,
+							SFTPair{Prompt: append([]string{"define"}, wToks...), Response: defToks},
+							SFTPair{Prompt: append(append([]string{"what", "does"}, wToks...), "mean"), Response: defToks},
+						)
 					}
 				}
 			}
@@ -127,7 +98,7 @@ func ParseCorpusContent(text string) ParsedCorpusItem {
 				qToks := SubwordTokenize(strings.TrimSpace(parts[0]))
 				aToks := SubwordTokenize(strings.TrimSpace(parts[1]))
 				if len(qToks) > 0 && len(aToks) > 0 {
-					item.QAPairs = append(item.QAPairs, QAPair{
+					item.SFTPairs = append(item.SFTPairs, SFTPair{
 						Prompt:   qToks,
 						Response: aToks,
 					})
@@ -217,8 +188,7 @@ func Tokenize(text string) []string {
 	return tokens
 }
 
-// SubwordTokenize performs morphological WordPiece-style stem + "##suffix" tokenization
-// so inflected forms ("learning", "learned", "connections") share root representations.
+// SubwordTokenize performs morphological WordPiece-style stem + "##suffix" tokenization.
 func SubwordTokenize(text string) []string {
 	raw := Tokenize(text)
 	out := make([]string, 0, len(raw)+4)
@@ -257,8 +227,7 @@ func EncodeWithVocab(text string, selfName string, knows func(tok string) bool) 
 			}
 			continue
 		}
-		// If user introduces a proper name after "name is" or "call me" and those grammar words
-		// are already learned, encode unseen proper names as <unk> instead of demanding /define!
+		// Allow unseen proper names in introduction slots ("my name is <X>", "call me <X>")
 		isIntroNameSlot := (idx >= 2 && raw[idx-2] == "name" && raw[idx-1] == "is" && knows("name") && knows("is")) ||
 			(idx >= 2 && raw[idx-2] == "call" && raw[idx-1] == "me" && knows("call") && knows("me"))
 		if isIntroNameSlot && !knows(w) {
@@ -269,7 +238,6 @@ func EncodeWithVocab(text string, selfName string, knows func(tok string) bool) 
 			out = append(out, w)
 			continue
 		}
-		// Try morphological split [stem, "##suffix"]
 		stem, suf := splitMorpheme(w)
 		if suf != "" && knows(stem) {
 			out = append(out, stem)
@@ -278,7 +246,6 @@ func EncodeWithVocab(text string, selfName string, knows func(tok string) bool) 
 			}
 			continue
 		}
-		// Try greedy WordPiece segmentation (root >= 4 chars + known "##piece")
 		if pieces, ok := greedyWordPiece(w, knows); ok {
 			out = append(out, pieces...)
 			continue
@@ -294,12 +261,10 @@ func splitMorpheme(word string) (string, string) {
 		if len(word) >= len(suf)+4 && strings.HasSuffix(word, suf) {
 			stem := word[:len(word)-len(suf)]
 			last := stem[len(stem)-1]
-			// Do not strip singular '-s' from Latin/Greek roots ending in -ss, -sis, -us, -is, -ous
-			if suf == "s" && (last == 's' || last == 'i' || last == 'u' || last == 'x') {
+			if suf == "s" && (last == 's' || last == 'i' || last == 'u' || last == 'x' || strings.HasSuffix(word, "ies")) {
 				continue
 			}
-			// Do not strip '-es' or '-ed' or '-er' if stem ends in a bare single vowel like 'hypothesi'
-			if (suf == "es" || suf == "ed" || suf == "er") && (last == 'i' || last == 'u') {
+			if (suf == "es" || suf == "ed") && (last == 'i' || last == 'u') {
 				continue
 			}
 			if len(stem) >= 4 && stem[len(stem)-1] == stem[len(stem)-2] && !strings.ContainsRune("aeioulsz", rune(stem[len(stem)-1])) {
@@ -315,7 +280,6 @@ func greedyWordPiece(word string, knows func(string) bool) ([]string, bool) {
 	if len(word) < 5 {
 		return nil, false
 	}
-	// Require substantial prefix root (>= 4 chars) to prevent spurious single-letter splits on unseen words
 	for split := len(word) - 1; split >= 4; split-- {
 		prefix := word[:split]
 		rest := "##" + word[split:]
@@ -334,7 +298,7 @@ func DetokenizeSubwords(tokens []string, selfName string) string {
 
 	for _, tok := range tokens {
 		if tok == padToken || tok == unkToken || tok == bosToken || tok == eosToken ||
-			tok == ctxToken || tok == askToken || tok == ansToken {
+			tok == userToken || tok == assistantToken {
 			continue
 		}
 		if strings.HasPrefix(tok, "##") {
@@ -380,7 +344,7 @@ func DetokenizeSubwords(tokens []string, selfName string) string {
 	return res
 }
 
-// ExtractKeywords returns deduplicated salient root words from text for semantic retrieval.
+// ExtractKeywords returns deduplicated salient root words from text.
 func ExtractKeywords(text string, limit int) []string {
 	raw := Tokenize(text)
 	seen := make(map[string]bool)

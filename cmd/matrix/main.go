@@ -147,8 +147,8 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 	fmt.Fprintf(out, "  Total RAM       : %s (auto-detected: %v)\n", specs.FormatRAM(hw.TotalRAMMB), hw.Detected)
 	fmt.Fprintf(out, "  Available RAM   : %s\n", specs.FormatRAM(hw.AvailableRAMMB))
 	fmt.Fprintf(out, "  Recommended Cap : %d MB (%s Tier)\n", prof.RAMBudgetMB, prof.TierName)
-	fmt.Fprintf(out, "  Model Capacity  : %d embed dim • %d hidden neurons • %d max vocab • %d threads\n",
-		prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
+	fmt.Fprintf(out, "  GPT Capacity    : %d layers × %d heads • %dD embed • %d FFN • %d max vocab • %d threads\n",
+		prof.NumLayers, prof.NumHeads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
 }
 
 func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *corpus.Reader) {
@@ -158,21 +158,20 @@ func printBrainDiagnostic(out io.Writer, theme ui.Theme, b *brain.Brain, cr *cor
 	grammarTotal := cr.GrammarCount()
 
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, theme.BoldGreen("Matrix Neural Brain & Corpus Status"))
+	fmt.Fprintln(out, theme.BoldGreen("Matrix Closed-Book GPT Brain & Corpus Status"))
 	fmt.Fprintf(out, "  Buddy Name & ID : %s (#%s) — %s\n",
 		theme.Bold(b.Name), b.ID, trainer.IntelligenceStage(b.Level, dictsDone, dictsTotal, grammarDone, grammarTotal))
 	fmt.Fprintf(out, "  Level & XP      : Level %d (%d XP  •  next level at %d XP)\n",
 		b.Level, b.XP, brain.XPForLevel(b.Level+1))
 	fmt.Fprintf(out, "  Curriculum      : Dictionaries %d/%d  →  Grammar %d/%d  →  Real Articles\n",
 		dictsDone, dictsTotal, grammarDone, grammarTotal)
-	fmt.Fprintf(out, "  Neural Architecture : Causal Self-Attention + GRU (%dD embed → %d GRU neurons → %d/%d vocab)\n",
-		b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab)
+	fmt.Fprintf(out, "  GPT Architecture    : %d Layers × %d Heads (%dD embed → %d SiLU FFN → %d/%d vocab)\n",
+		b.Net.NumLayers, b.Net.NumHeads, b.Net.EmbedDim, b.Net.HiddenNeurons, b.Net.LearnedWordCount(), b.Net.MaxVocab)
+	fmt.Fprintf(out, "  Inference Mode      : 100%% Closed-Book Transformer Weights (zero lookup tables)\n")
 	fmt.Fprintf(out, "  Optimizer & Compute : AdamW (batch %d • %d worker threads) • %d learned synapses\n",
 		b.BatchSize, b.WorkerThreads, b.Net.ActiveSynapses())
 	fmt.Fprintf(out, "  Training Stats  : %d items read • %d tokens trained • smoothed loss: %.4f\n",
 		b.ArticlesRead, b.TokensTrained, b.SmoothedLoss)
-	fmt.Fprintf(out, "  Study Memory    : %d/%d passages • %d/%d lexical entries (LRU-bounded)\n",
-		len(b.Passages), b.MaxPassages, len(b.Dictionary), b.MaxDictEntries)
 	fmt.Fprintf(out, "  Article Sources : %d-word Dictionary (%d core ch.) → %d Grammar → Wikipedia/Wikibooks/arXiv + %d articles + notes (%s)\n",
 		cr.DictionaryWordCount(), dictsTotal, grammarTotal, cr.SeedCount(), cr.NotesDir())
 	if topics := b.TopTopics(5); len(topics) > 0 {

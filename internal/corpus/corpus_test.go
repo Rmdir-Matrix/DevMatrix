@@ -19,8 +19,8 @@ func TestReader4800WordLexiconFirstThenGrammarThenArticles(t *testing.T) {
 	if r.DictionaryWordCount() < 4000 {
 		t.Fatalf("expected >= 4000 real English dictionary words, got %d", r.DictionaryWordCount())
 	}
-	if r.DictionaryCount() != 8 {
-		t.Fatalf("expected 8 Phase-1 core dictionary chapters (640 words), got %d", r.DictionaryCount())
+	if r.DictionaryCount() != 6 {
+		t.Fatalf("expected 6 Phase-1 core dictionary chapters (240 foundational words), got %d", r.DictionaryCount())
 	}
 	if r.ExtendedDictionaryCount() < 50 {
 		t.Fatalf("expected >= 50 extended dictionary chapters, got %d", r.ExtendedDictionaryCount())

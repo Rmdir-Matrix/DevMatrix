@@ -9,10 +9,14 @@ import (
 	"time"
 )
 
-// GenerateModelReply decodes a response 100% from the Causal Self-Attention + GRU language model
-// over the full vocabulary (zero n-gram lookup tables, zero hardcoded reply maps).
-// Returns (reply, known=false, reason) when subword OOV or neural perplexity detects unknown input.
+// GenerateModelReply runs pure closed-book GPT inference without prior chat turns.
 func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
+	return b.GenerateModelReplyWithHistory(nil, userInput)
+}
+
+// GenerateModelReplyWithHistory decodes a response 100% from the Closed-Book Multi-Layer,
+// Multi-Head GPT Transformer weights — ZERO lookup tables, ZERO RAG passage/dictionary retrieval!
+func (b *Brain) GenerateModelReplyWithHistory(history []ChatTurn, userInput string) (string, bool, string) {
 	trimmed := strings.TrimSpace(userInput)
 	if trimmed == "" {
 		return "", false, "Say something or ask a study question."
@@ -20,12 +24,12 @@ func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
 
 	if b.Net == nil || b.Net.AdamStep == 0 || b.Net.LearnedWordCount() < 12 {
 		return "", false, fmt.Sprintf(
-			"My neural weights are untrained (%d words, 0 learned synapses). Start Mode 1 (Training Mode) so I can study my dictionaries and grammar first.",
+			"My GPT Transformer weights are untrained (%d words, 0 learned synapses). Start Mode 1 (Training Mode) so I can train my layers on dictionaries, grammar, and articles first.",
 			b.Net.LearnedWordCount(),
 		)
 	}
 
-	// 1. Subword WordPiece tokenization + OOV check (no hardcoded conversational word list!)
+	// 1. Subword WordPiece tokenization + OOV check
 	promptSubwords, unknownWords := EncodeWithVocab(trimmed, b.Name, b.Net.KnowsToken)
 	if len(unknownWords) > 0 {
 		shown := unknownWords
@@ -33,40 +37,42 @@ func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
 			shown = shown[:4]
 		}
 		return "", false, fmt.Sprintf(
-			"I do not know %q yet (%d words in my vocabulary). Try '/define %s' or '/study %s' to teach me!",
+			"I have not trained on %q yet (%d words in my GPT vocabulary). Try '/define %s' or '/study %s' so I can learn it in my weights!",
 			strings.Join(shown, ", "), b.Net.LearnedWordCount(), shown[0], shown[0],
 		)
 	}
 	if len(promptSubwords) == 0 {
-		return "", false, "I could not parse any known words from that input."
+		return "", false, "I could not parse any known tokens from that input."
 	}
 
-	// 2. Retrieve relevant <ctx> subwords from learned QAs, Dictionary, or Semantic Passages
-	ctxSubwords := b.retrieveContextSubwords(trimmed, promptSubwords)
-
-	// 3. Build neural conditioning sequence: [<ctx> ctxSubwords] <ask> promptSubwords <ans>
+	// 2. Build Closed-Book GPT Causal Context Window: [optional prior turn] + <user> prompt <assistant>
 	askSub := promptSubwords
-	if len(askSub) > 14 {
-		askSub = askSub[len(askSub)-14:]
+	if len(askSub) > 18 {
+		askSub = askSub[len(askSub)-18:]
 	}
 	askIDs := b.Net.LookupTokens(askSub)
 
 	var condSeq []int
-	if len(ctxSubwords) > 0 {
-		if len(ctxSubwords) > 24 {
-			ctxSubwords = ctxSubwords[:24]
+	if len(history) > 0 && isFollowUpTurn(trimmed) {
+		last := history[len(history)-1]
+		prevU, uUnk := EncodeWithVocab(last.User, b.Name, b.Net.KnowsToken)
+		prevA, aUnk := EncodeWithVocab(last.Assistant, b.Name, b.Net.KnowsToken)
+		if len(uUnk) == 0 && len(aUnk) == 0 && len(prevU)+len(prevA)+len(askIDs)+6 <= maxSeqLen-24 {
+			condSeq = append(condSeq, userID)
+			condSeq = append(condSeq, b.Net.LookupTokens(prevU)...)
+			condSeq = append(condSeq, assistantID)
+			condSeq = append(condSeq, b.Net.LookupTokens(prevA)...)
+			condSeq = append(condSeq, eosID)
 		}
-		condSeq = append(condSeq, ctxID)
-		condSeq = append(condSeq, b.Net.LookupTokens(ctxSubwords)...)
 	}
-	condSeq = append(condSeq, askID)
+	condSeq = append(condSeq, userID)
 	condSeq = append(condSeq, askIDs...)
-	condSeq = append(condSeq, ansID)
+	condSeq = append(condSeq, assistantID)
 
-	// 4. Neural Perplexity / Predictive Entropy Uncertainty Gate
+	// 3. Forward pass through all Multi-Head GPT Transformer blocks (100% pure weights!)
 	probs, logits, entropy, maxProb := b.Net.ForwardFullVocab(condSeq)
 	if len(probs) == 0 {
-		return "", false, "My neural vocabulary is empty."
+		return "", false, "My GPT vocabulary is empty."
 	}
 
 	V := float64(b.Net.LearnedWordCount() + 2)
@@ -74,59 +80,46 @@ func (b *Brain) GenerateModelReply(userInput string) (string, bool, string) {
 	normEntropy := entropy / maxPossibleEntropy
 	perplexity := math.Exp(entropy)
 
-	// When no <ctx> passage/definition matched, require strong direct neural confidence
-	// (e.g. learned conversational QA patterns have high maxProb & low entropy; unstudied topics have flat distributions).
-	if len(ctxSubwords) == 0 {
-		kws := ExtractKeywords(trimmed, 6)
-		// If asking about domain keywords with zero retrieved memory and low direct neural confidence, report unknown
-		if maxProb < 0.075 || normEntropy > 0.84 {
-			topicHint := trimmed
-			if len(kws) > 0 {
-				topicHint = strings.Join(kws, " ")
-			}
-			return "", false, fmt.Sprintf(
-				"My neural uncertainty is too high on %q (perplexity %.1f, confidence %.1f%%) and I have no studied notes on it yet. Try '/study %s' or 'remember: <fact>'!",
-				topicHint, perplexity, maxProb*100, topicHint,
-			)
+	// 4. Pure Neural Softmax Confidence / Perplexity Gate
+	if maxProb < 0.065 || normEntropy > 0.85 {
+		kws := ExtractKeywords(trimmed, 5)
+		topicHint := trimmed
+		if len(kws) > 0 {
+			topicHint = strings.Join(kws, " ")
 		}
-	} else if maxProb < 0.025 {
 		return "", false, fmt.Sprintf(
-			"My neural weights are not confident enough to form an answer yet (perplexity %.1f). Train me further in Mode 1!",
-			perplexity,
+			"My GPT weights are still uncertain about %q (confidence %.1f%%, perplexity %.1f). Train me more in Mode 1 or run '/study %s'!",
+			topicHint, maxProb*100, perplexity, topicHint,
 		)
 	}
 
-	// 5. Full-Vocabulary Autoregressive Nucleus (Top-P / Top-K) Decoding
+	// 5. Closed-Book Autoregressive Nucleus (Top-P / Top-K) Decoding
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	maxGenTokens := 26
-	temperature := float32(0.45)
+	temperature := float32(0.35)
 	if b.Level < 5 {
-		temperature = 0.55
+		temperature = 0.50
 	}
 
-	generated := b.decodeAutoregressive(condSeq, probs, logits, maxGenTokens, temperature, 14, 0.85, rng)
+	generated := b.decodeAutoregressive(condSeq, logits, 28, temperature, 10, 0.82, rng)
 	if len(generated) == 0 {
-		return "", false, "I could not decode a complete sentence from my neural weights yet. Train me a bit more in Mode 1!"
+		return "", false, "My GPT layers need more training to complete that thought — run Mode 1 for a few more items!"
 	}
 
 	reply := DetokenizeSubwords(generated, b.Name)
 	if strings.TrimSpace(reply) == "" {
-		return "", false, "My decoded output was empty; please train me on more grammar and articles."
+		return "", false, "My decoded output was empty; please train me further in Mode 1."
 	}
 	return reply, true, ""
 }
 
 // GenerateThoughtFromWeights decodes an emergent status thought during Training Mode
-// 100% from the Causal Self-Attention + GRU neural weights (zero fmt.Sprintf templates!).
+// 100% from the GPT Transformer weights starting from <bos> + 1..2 seed subwords.
 func (b *Brain) GenerateThoughtFromWeights(recentTitle, recentExcerpt string) string {
 	if b.Net == nil || b.Net.AdamStep == 0 || b.Net.LearnedWordCount() < 6 {
 		return ""
 	}
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(b.ArticlesRead*79)))
-
-	// Seed the neural decoder with <bos> + 1..2 subwords from the newly learned item so the
-	// GRU + Self-Attention completes a genuine thought from its current weights.
 	seedSource := recentExcerpt
 	if strings.TrimSpace(seedSource) == "" {
 		seedSource = recentTitle
@@ -151,19 +144,18 @@ func (b *Brain) GenerateThoughtFromWeights(recentTitle, recentExcerpt string) st
 		}
 	}
 
-	probs, logits, _, _ := b.Net.ForwardFullVocab(seq)
-	if len(probs) == 0 {
+	_, logits, _, _ := b.Net.ForwardFullVocab(seq)
+	if len(logits) == 0 {
 		return ""
 	}
 
-	// Decoding horizon and sharpness naturally reflect model maturity
 	maxToks := 10 + minInt(b.Level, 14)
-	temp := float32(0.70)
+	temp := float32(0.65)
 	if b.Level >= 6 {
-		temp = 0.50
+		temp = 0.45
 	}
 
-	cont := b.decodeAutoregressive(seq, probs, logits, maxToks, temp, 12, 0.85, rng)
+	cont := b.decodeAutoregressive(seq, logits, maxToks, temp, 10, 0.85, rng)
 	outTokens = append(outTokens, cont...)
 	if len(outTokens) < 3 {
 		return ""
@@ -171,90 +163,13 @@ func (b *Brain) GenerateThoughtFromWeights(recentTitle, recentExcerpt string) st
 	return DetokenizeSubwords(outTokens, b.Name)
 }
 
-func (b *Brain) retrieveContextSubwords(userInput string, promptSubwords []string) []string {
-	// 0. Check learned dialogue / flashcard QA memory first (populated ONLY as Matrix trains!)
-	if qaResp, ok := b.MatchLearnedQA(promptSubwords); ok {
-		return qaResp
-	}
-
-	lower := strings.ToLower(strings.TrimSpace(userInput))
-
-	// Do not trigger open-book dictionary/article retrieval on personal/social conversational turns
-	// so Matrix never defines the user's own name or greeting words from encyclopedia articles!
-	if isConversationalTurn(lower) {
-		return nil
-	}
-
-	kws := ExtractKeywords(userInput, 6)
-
-	isDefAsk := strings.HasPrefix(lower, "define ") ||
-		strings.Contains(lower, "what does ") ||
-		strings.Contains(lower, "meaning of ") ||
-		(strings.HasPrefix(lower, "what is ") && len(kws) == 1)
-
-	// 1. Check lexical dictionary first for explicit word definitions
-	if isDefAsk {
-		for _, kw := range kws {
-			if kw == "define" || kw == "mean" || kw == "meaning" {
-				continue
-			}
-			if entry, ok := b.LookupDictionary(kw); ok {
-				return SubwordTokenize(entry.Definition)
-			}
-		}
-		rawToks := Tokenize(userInput)
-		for _, rt := range rawToks {
-			if rt == "define" || rt == "mean" || rt == "meaning" || stopWords[rt] {
-				continue
-			}
-			if entry, ok := b.LookupDictionary(rt); ok {
-				return SubwordTokenize(entry.Definition)
-			}
-		}
-	}
-
-	// 2. Search studied domain passages using topic keywords (avoiding question-word noise)
-	if len(kws) > 0 {
-		searchQuery := strings.Join(kws, " ")
-		hits := b.SearchPassagesWithScore(searchQuery, 2)
-		if len(hits) > 0 && hits[0].Score >= 0.42 {
-			if len(kws) == 1 || hits[0].Score >= 0.50 {
-				return SubwordTokenize(hits[0].Passage.Text)
-			}
-		}
-	}
-
-	// 3. Fallback to dictionary entry ONLY when prompt is a question or concept inquiry
-	isInquiry := strings.Contains(lower, "?") ||
-		strings.HasPrefix(lower, "what ") ||
-		strings.HasPrefix(lower, "explain ") ||
-		strings.HasPrefix(lower, "describe ") ||
-		strings.HasPrefix(lower, "tell ")
-	if isInquiry && len(kws) == 1 {
-		if entry, ok := b.LookupDictionary(kws[0]); ok {
-			return SubwordTokenize(entry.Definition)
-		}
-	}
-	return nil
-}
-
-// isConversationalTurn prevents RAG article/dictionary lookup from hijacking social dialogue
-// (note: this NEVER generates a reply — the neural network still must have learned the words & weights!).
-func isConversationalTurn(lower string) bool {
-	clean := strings.Trim(lower, ".,!?;: ")
-	socialPrefixes := []string{
-		"my name is ", "call me ", "i am ", "i'm ",
-		"how are you", "how is it going", "how's it going",
-		"nice to meet", "good morning", "good afternoon", "good evening",
-		"thank you", "thanks", "hello", "hi", "hey", "goodbye", "bye",
-		"who are you", "what is your name", "what are you doing",
-	}
-	for _, p := range socialPrefixes {
-		if clean == strings.TrimSpace(p) || strings.HasPrefix(clean, p) {
-			// Still allow genuine academic questions like "i am studying photosynthesis, explain it"
-			if strings.Contains(clean, "explain") || strings.Contains(clean, "define") {
-				return false
-			}
+func isFollowUpTurn(input string) bool {
+	l := strings.ToLower(strings.TrimSpace(input))
+	for _, p := range []string{
+		"tell me more", "more about that", "elaborate", "explain more",
+		"why is that", "and why", "give an example", "what else",
+	} {
+		if strings.HasPrefix(l, p) {
 			return true
 		}
 	}
@@ -263,7 +178,6 @@ func isConversationalTurn(lower string) bool {
 
 func (b *Brain) decodeAutoregressive(
 	initSeq []int,
-	firstProbs []float32,
 	firstLogits []float32,
 	maxSteps int,
 	temperature float32,
@@ -301,9 +215,12 @@ func (b *Brain) decodeAutoregressive(
 		seenCounts[nextID]++
 		prevID = nextID
 
-		// Stop cleanly at sentence-ending punctuation once a complete clause is formed
 		if (tok == "." || tok == "!" || tok == "?") && len(out) >= 6 {
-			break
+			// Stop cleanly if <eos> is strong on the next step or clause is complete
+			nextProbs, _, _, _ := b.Net.ForwardFullVocab(seq)
+			if len(nextProbs) > eosID && (nextProbs[eosID] >= 0.15 || len(out) >= 14) {
+				break
+			}
 		}
 	}
 	return out
@@ -333,6 +250,14 @@ func sampleTopKTopP(
 		prevWasSubword = strings.HasPrefix(pt, "##")
 	}
 
+	// Find max logit for subword probability check
+	maxRawL := float32(-1e30)
+	for _, l := range logits {
+		if l > maxRawL {
+			maxRawL = l
+		}
+	}
+
 	type cand struct {
 		id    int
 		logit float32
@@ -341,15 +266,14 @@ func sampleTopKTopP(
 	pool := make([]cand, 0, len(logits))
 
 	for vid, rawL := range logits {
-		if rawL <= -27.5 {
+		if rawL <= -1e8 {
 			continue
 		}
-		// Never repeat the exact same token immediately in a row
 		if vid == prevID {
 			continue
 		}
 		if vid == eosID {
-			if step < 4 {
+			if step < 3 {
 				continue
 			}
 			pool = append(pool, cand{id: vid, logit: rawL * invTemp})
@@ -363,27 +287,25 @@ func sampleTopKTopP(
 		if step == 0 && (isSub || isPunct) {
 			continue
 		}
-		// Subword suffix "##..." can only follow an alphanumeric root word when genuinely high-probability
-		if isSub && (prevWasPunct || prevWasSubword || rawL < -1.35) {
+		if isSub && (prevWasPunct || prevWasSubword || (maxRawL-rawL) > 1.5) {
 			continue
 		}
-		// Prevent consecutive punctuation ("..", ".,", etc.)
 		if isPunct && prevWasPunct {
 			continue
 		}
 
-		adj := rawL // rawL is log(prob) <= 0
+		adj := rawL
 		if cnt := seenCounts[vid]; cnt > 0 {
 			if isPunct {
-				adj -= float32(cnt) * 2.2
+				adj -= float32(cnt) * 2.5
 			} else if stopWords[tok] {
 				if cnt >= 2 {
 					adj -= float32(cnt-1) * 1.8
 				} else {
-					adj -= 0.45
+					adj -= 0.4
 				}
 			} else {
-				adj -= float32(cnt) * 2.4
+				adj -= float32(cnt) * 2.5
 			}
 		}
 		pool = append(pool, cand{id: vid, logit: adj * invTemp})
@@ -395,7 +317,7 @@ func sampleTopKTopP(
 
 	sort.Slice(pool, func(i, j int) bool {
 		return pool[i].logit > pool[j].logit
-	} )
+	})
 	if topK > 0 && len(pool) > topK {
 		pool = pool[:topK]
 	}
@@ -411,7 +333,6 @@ func sampleTopKTopP(
 		pool[i].prob /= sumExp
 	}
 
-	// Nucleus Top-P cutoff
 	if topP > 0 && topP < 1.0 {
 		var cum float64
 		keep := 0
