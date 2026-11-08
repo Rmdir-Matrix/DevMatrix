@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Matrix File Viewer</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1110;--surface:#121b19;--line:#293a35;--muted:#9bac9f;--text:#edf5ed;--green:#b9f58b;--green-dark:#1e392a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.5}button,input{font:inherit}button{cursor:pointer}button:focus-visible,.drop:focus-within{outline:3px solid #e1ffb7;outline-offset:3px}.topbar{border-bottom:1px solid var(--line)}.topbar-inner{max-width:1100px;padding:19px 28px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}.brand{display:flex;align-items:center;gap:11px;font-size:13px;font-weight:750;letter-spacing:.13em}.logo{width:28px;height:28px;background:var(--green);color:#102214;display:grid;place-items:center;border-radius:7px;font-weight:900;font-size:18px}.pill{color:var(--green);font-size:11px;letter-spacing:.1em;font-weight:700;border:1px solid #365441;border-radius:20px;padding:5px 10px;white-space:nowrap}main{max-width:1100px;margin:auto;padding:64px 28px 72px}.eyebrow{font-size:11px;letter-spacing:.17em;text-transform:uppercase;font-weight:750;color:var(--green);margin:0 0 12px}.hero h1{font-size:clamp(36px,6vw,60px);line-height:1.08;letter-spacing:-.045em;margin:0 0 18px;font-weight:700}.hero p{max-width:600px;color:#b4c2b7;margin:0;font-size:16px}.drop{margin-top:35px;background:var(--surface);border:1px dashed #5b8265;border-radius:14px;padding:30px;display:flex;align-items:center;gap:22px;transition:border-color .15s,background .15s}.drop.drag{border-color:var(--green);background:#192a20}.upload-icon{flex:0 0 54px;width:54px;height:54px;border-radius:12px;background:var(--green-dark);color:var(--green);display:grid;place-items:center}.drop-copy{flex:1}.drop-copy strong{display:block;font-size:16px}.drop-copy span{color:var(--muted);font-size:13px}.choose,.download{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;background:var(--green);color:#142318;border-radius:8px;padding:11px 17px;font-weight:750;white-space:nowrap}.choose:hover,.download:hover{background:#d4ffa9}.choose input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}.note{display:flex;gap:8px;color:var(--muted);font-size:12px;margin:13px 1px 0}.status{min-height:22px;margin:14px 0 0;font-size:13px;color:var(--muted)}.status.error{color:#ffb4a6}.viewer{margin-top:35px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}.viewer-head{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:23px 24px;border-bottom:1px solid var(--line)}.viewer-head h2{font-size:18px;margin:0;overflow-wrap:anywhere}.viewer-head p{margin:3px 0 0;font-size:12px;color:var(--muted)}.download{font-size:12px;padding:9px 13px}.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);padding:0 18px}.tab{border:0;border-bottom:2px solid transparent;border-radius:0;color:var(--muted);background:transparent;padding:14px 10px 12px;font-size:13px;white-space:nowrap}.tab[aria-selected=true]{color:var(--green);border-color:var(--green)}.tab:hover{color:var(--text)}.toolbar{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}.toolbar label{display:flex;align-items:center;gap:8px}.toolbar input{width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:#0b1411;color:var(--text)}pre{margin:0;padding:24px;color:#d9e7d9;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;min-height:260px;max-height:620px;overflow:auto;background:#0e1614}.foot{margin-top:24px;color:var(--muted);font-size:12px;max-width:750px}.foot strong{color:#d4e4d4}[hidden]{display:none!important}@media(max-width:650px){main{padding:44px 18px}.topbar-inner{padding:16px 18px}.drop{align-items:flex-start;flex-wrap:wrap;padding:20px;gap:14px}.upload-icon{width:44px;height:44px;flex-basis:44px}.choose{width:100%}.viewer-head{align-items:flex-start;flex-direction:column}.toolbar{align-items:flex-start;flex-direction:column}.toolbar input{width:200px}}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="logo">M</span><span>MATRIX <span style="color:#62776b">/</span> FILE VIEWER</span></div><span class="pill">● &nbsp;PRIVATE &amp; OFFLINE</span></div></header>
+<main>
+<section class="hero"><p class="eyebrow">A little window into your Matrix</p><h1>See what's inside.</h1><p>Open a <strong>.matrix</strong> file and explore its information, saved training samples, vocabulary, and model data in a readable format.</p></section>
+<div class="drop" id="drop"><div class="upload-icon" aria-hidden="true"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m-4 4 4-4 4 4"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></div><div class="drop-copy"><strong>Drop your .matrix file here</strong><span>Or choose a file from your computer</span></div><label class="choose">Choose file <input id="file" type="file" accept=".matrix,application/gzip"></label></div>
+<p class="note"><span aria-hidden="true">◎</span><span>Everything stays on your device. No uploads, account, or internet needed. Limit: 32 MB compressed / 96 MB expanded.</span></p><p id="status" class="status" role="status" aria-live="polite">Ready when you are.</p>
+<section class="viewer" id="viewer" hidden aria-label="File contents"><div class="viewer-head"><div><p class="eyebrow" style="margin:0 0 4px">FILE CONTENTS</p><h2 id="filename"></h2><p id="filemeta"></p></div><button id="download" class="download" type="button">↓ &nbsp; Download as .txt</button></div><div class="tabs" role="tablist" aria-label="Sections"><button class="tab" role="tab" aria-selected="true" data-tab="overview">Overview</button><button class="tab" role="tab" aria-selected="false" data-tab="samples">Training samples</button><button class="tab" role="tab" aria-selected="false" data-tab="vocabulary">Vocabulary</button><button class="tab" role="tab" aria-selected="false" data-tab="weights">Model data</button></div><div class="toolbar"><span id="section-hint"></span><label>Find in section <input id="filter" type="search" placeholder="Filter lines…" aria-label="Filter lines in this section"></label></div><pre id="output" tabindex="0"></pre></section>
+<p class="foot"><strong>Good to know:</strong> A Matrix file is a model, not a text document. Its weights are numbers; they cannot be turned back into everything it learned. Training samples shown here are only the replay samples saved in the file and may contain private material. The text download is a readable report, not an importable Matrix file.</p>
+</main>
+<script>
+'use strict';
+// The current export is gzip JSON (matrix-share-v2), containing base64 MXG3.
+// Guard decompression to keep unexpectedly large files from exhausting a small PC.
+const MAX_FILE = 32 * 1024 * 1024, MAX_EXPANDED = 96 * 1024 * 1024;
+const $ = id => document.getElementById(id);
+const encoder = new TextDecoder('utf-8', {fatal:true});
+function need(ok, message) { if (!ok) throw new Error(message); }
+async function decompressFile(file) {
+  need(file.size <= MAX_FILE, 'File exceeds the 32 MB compressed-size limit.');
+  need(typeof DecompressionStream !== 'undefined', 'This browser cannot decompress gzip. Try a recent Chrome, Edge, or Firefox.');
+  const reader = file.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+  let size = 0; const chunks = [];
+  try {
+    for (;;) { const {value, done} = await reader.read(); if (done) break; size += value.byteLength; need(size <= MAX_EXPANDED, 'Expanded file exceeds the 96 MB safety limit.'); chunks.push(value); }
+  } catch (e) { await reader.cancel().catch(()=>{}); throw e; }
+  const data = new Uint8Array(size); let pos=0;
+  for (const chunk of chunks) {data.set(chunk,pos); pos += chunk.byteLength;}
+  return encoder.decode(data);
+}
+function decodeBase64(str) {
+  need(typeof str === 'string' && str.length > 0 && str.length <= MAX_EXPANDED, 'Missing or oversized brain payload.');
+  let raw; try { raw=atob(str); } catch { throw new Error('Invalid base64 brain payload.'); }
+  const bytes=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i); return bytes;
+}
+class BinaryReader {
+  constructor(bytes) { this.bytes=bytes; this.view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength); this.pos=0; }
+  take(n) { need(Number.isSafeInteger(n) && n>=0 && n<=this.bytes.length-this.pos, 'The Matrix payload is truncated or invalid.'); const start=this.pos; this.pos+=n; return start; }
+  u16(){return this.view.getUint16(this.take(2),true)}
+  u32(){return this.view.getUint32(this.take(4),true)}
+  i32(){return this.view.getInt32(this.take(4),true)}
+  i64(){return this.view.getBigInt64(this.take(8),true).toString()}
+  text(n){let p=this.take(n);return encoder.decode(this.bytes.subarray(p,p+n))}
+  tensor(name) {
+    const n=this.u32(); need(n<=50_000_000, 'Tensor is too large.'); const p=this.take(n*4);
+    const preview=[]; for(let i=0;i<Math.min(n,6);i++) preview.push(this.view.getFloat32(p+i*4,true));
+    return {name,length:n,preview};
+  }
+}
+function decodeBrain(bytes) {
+  const r=new BinaryReader(bytes); need(r.text(4)==='MXG3', 'Unsupported brain format. This viewer supports MXG3 .matrix exports.');
+  const metaLen=r.u32(); need(metaLen<=32*1024*1024, 'Brain metadata is too large.');
+  let meta; try {meta=JSON.parse(r.text(metaLen));} catch {throw new Error('Invalid brain metadata.');}
+  need(meta && typeof meta === 'object' && !Array.isArray(meta), 'Invalid brain metadata.');
+  const layers=r.i32(), heads=r.i32(), embed=r.i32(), ffn=r.i32(), maxVocab=r.i32(), step=r.i64(), vocabSize=r.i32();
+  need(layers>0 && layers<=128 && heads>0 && embed>0 && ffn>0 && maxVocab>0 && vocabSize>=7 && vocabSize<=200000, 'Invalid model dimensions.');
+  const vocab=[]; for(let i=0;i<vocabSize;i++){const word=r.text(r.u16()), count=r.i32();vocab.push({word,count});}
+  const top=['Embeddings','EmbM','EmbV','BOut','BOutM','BOutV','PosEmb','PosM','PosV','NormF','NormFM','NormFV'];
+  const per=['Norm1','Norm1M','Norm1V','WQ','WQM','WQV','WK','WKM','WKV','WV','WVM','WVV','WO','WOM','WOV','Norm2','Norm2M','Norm2V','W1','W1M','W1V','B1','B1M','B1V','W2','W2M','W2V','B2','B2M','B2V'];
+  const tensors=top.map(x=>r.tensor(x)); for(let i=0;i<layers;i++) for(const x of per) tensors.push(r.tensor('Layer '+(i+1)+' / '+x));
+  need(r.pos===bytes.length, 'Unexpected trailing bytes in brain payload.');
+  return {meta,layers,heads,embed,ffn,maxVocab,step,vocab,tensors};
+}
+async function parseMatrix(file) {
+  let text; try { text=await decompressFile(file); } catch(e) { if(e.message.includes('limit') || e.message.includes('browser')) throw e; throw new Error('Could not open gzip data. Is this a valid .matrix export?'); }
+  let env; try { env=JSON.parse(text); } catch {throw new Error('The archive does not contain a valid Matrix manifest.');}
+  need(env && env.format==='matrix-share-v2', 'Unsupported file format. Export a matrix-share-v2 file from Matrix.');
+  need(typeof env.sha256_checksum==='string' && /^[a-f0-9]{64}$/i.test(env.sha256_checksum), 'Missing or invalid SHA-256 checksum.');
+  const bytes=decodeBase64(env.brain_payload); let integrity='Not checked (browser does not offer SHA-256 on this page)';
+  if(globalThis.crypto && globalThis.crypto.subtle) {
+    const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+    const hex=Array.from(hash,x=>x.toString(16).padStart(2,'0')).join('');
+    need(hex===env.sha256_checksum.toLowerCase(), 'Checksum mismatch: the file may be corrupted.'); integrity='SHA-256 verified';
+  }
+  return {summary:env.summary || {},exportedAt:env.exported_at || 'Unknown',integrity,brain:decodeBrain(bytes)};
+}
+function renderSample(sample, vocab, name) {
+  const tokens=Array.isArray(sample.IDs)?sample.IDs:[];
+  let text='';
+  for(const id of tokens){
+    const tok=Number.isInteger(id) && vocab[id] ? vocab[id].word : '[unknown token '+id+']';
+    if(tok==='<pad>' || tok==='<bos>' || tok==='<eos>') continue;
+    if(tok==='<user>' || tok==='<assistant>'){text+=(text?'\n':'')+(tok==='<user>'?'User: ':'Assistant: ');continue;}
+    if(tok.startsWith('##')){text+=tok.slice(2);continue;}
+    const word=tok==='<self>'?(name||'Matrix'):tok;
+    if(text && !/[\s(]$/.test(text) && !/^[.,!?;:)]$/.test(word)) text+=' ';
+    text+=word;
+  }
+  return text.trim() || '(empty sample)';
+}
+function makeSections(result, fileName) {
+  const b=result.brain, m=b.meta, summary=result.summary;
+  const cleanMeta={...m}; delete cleanMeta.core_replay; delete cleanMeta.recent_replay;
+  const overview=['MATRIX FILE VIEWER', 'File: '+fileName, 'Format: matrix-share-v2 / MXG3', 'Exported: '+result.exportedAt, 'Integrity: '+result.integrity, '', 'EXPORT SUMMARY', JSON.stringify(summary,null,2), '', 'MODEL ARCHITECTURE', `Layers: ${b.layers}   Attention heads: ${b.heads}`, `Embedding width: ${b.embed}   Feed-forward width: ${b.ffn}`, `Vocabulary: ${b.vocab.length} / ${b.maxVocab}`, 'Optimizer steps: '+b.step, '', 'BRAIN METADATA (replay samples shown separately)', JSON.stringify(cleanMeta,null,2)].join('\n');
+  const sampleGroups=[['Core replay',m.core_replay],['Recent replay',m.recent_replay]];
+  const samples=['SAVED TRAINING REPLAY SAMPLES','These are retained training samples, not everything the model learned. They may contain private text.',''];
+  for(const [label,group] of sampleGroups){const items=Array.isArray(group)?group:[]; samples.push(`--- ${label} (${items.length}) ---`); if(!items.length)samples.push('(None saved)'); items.forEach((item,i)=>samples.push(`\n#${i+1} (loss starts at token ${item.LossStart})\n${renderSample(item,b.vocab,m.name)}`)); samples.push('');}
+  const vocabulary=['VOCABULARY','ID\tTOKEN\tCOUNT',...b.vocab.map((v,i)=>`${i}\t${JSON.stringify(v.word)}\t${v.count}`)].join('\n');
+  const weights=['MODEL DATA','Weights and optimizer state are numeric, not readable learned text.','Each tensor below shows its number of float32 values and first six values.','',...b.tensors.map(t=>`${t.name}\t${t.length} values\t[${t.preview.join(', ')}${t.length>6?', …':''}]`)].join('\n');
+  return {overview,samples:samples.join('\n'),vocabulary,weights};
+}
+let sections=null,current='overview',loadedFileName='',loadId=0;
+const hints={overview:'Summary and saved metadata',samples:'Saved replay only · may contain private text',vocabulary:'Token IDs and training counts',weights:'Tensor sizes and first six values'};
+function render() {
+  if(!sections)return; const term=$('filter').value.toLowerCase();
+  $('output').textContent=term?sections[current].split('\n').filter(line=>line.toLowerCase().includes(term)).join('\n'):sections[current];
+  $('section-hint').textContent=hints[current];
+}
+async function openFile(file) {
+  if(!file)return; const id=++loadId; sections=null; $('viewer').hidden=true; $('filter').value=''; $('status').className='status'; $('status').textContent='Opening file locally…';
+  try {
+    const result=await parseMatrix(file); if(id!==loadId)return;
+    loadedFileName=file.name; sections=makeSections(result,file.name); current='overview';
+    document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.tab===current)));
+    $('filename').textContent=file.name; $('filemeta').textContent=`${result.brain.meta.name || result.summary.exported_name || 'Matrix'} · ${result.integrity}`;
+    $('viewer').hidden=false; $('status').textContent='File opened. Choose a section below.'; render();
+  } catch(e) {if(id!==loadId)return; $('status').className='status error'; $('status').textContent='Could not open file: '+(e.message || 'Unknown error');}
+}
+$('file').addEventListener('change',e=>{openFile(e.target.files[0]);e.target.value='';});
+$('filter').addEventListener('input',render);
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{current=t.dataset.tab;document.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-selected',String(x===t)));$('filter').value='';render();}));
+$('download').addEventListener('click',()=>{if(!sections)return;const report=Object.values(sections).join('\n\n========================================\n\n');const url=URL.createObjectURL(new Blob([report],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=(loadedFileName.replace(/\.matrix$/i,'')||'matrix')+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+const drop=$('drop'); for(const event of ['dragenter','dragover']) drop.addEventListener(event,e=>{e.preventDefault();drop.classList.add('drag');});
+for(const event of ['dragleave','drop']) drop.addEventListener(event,e=>{e.preventDefault();drop.classList.remove('drag');});
+drop.addEventListener('drop',e=>openFile(e.dataTransfer.files[0]));
+</script>
+</body>
+</html>

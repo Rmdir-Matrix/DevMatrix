@@ -67,6 +67,12 @@ Choose **`[3] Share / Export`** to:
 - **Import** a friend's `.matrix` file — pruning vocabulary and replay buffers after loading. Model layers and FFN width are not downsized, and import temporarily needs extra memory; large models may not fit on a smaller machine.
 - **Rename** or **Switch / Create** multiple saved Matrixes.
 
+### Viewing an exported `.matrix` file
+
+Open `matrix-viewer.html` in a recent Chrome, Edge, or Firefox browser, then choose or drag in a `matrix-share-v2` `.matrix` export. The standalone viewer works offline and can download a readable `.txt` report with the metadata, saved replay samples, vocabulary, and tensor summaries. Replay may contain private training text; weights are numbers, not a recoverable transcript of everything learned. The viewer checks the archive checksum when Web Crypto is available, and limits files to 32 MB compressed / 96 MB expanded to reduce memory use. It does not modify the original or create an importable `.matrix` file.
+
+To test the viewer: `node tests/viewer.test.cjs` (Node 22+).
+
 **Current limitation:** All model weights and optimizer state are in RAM. SSD expert paging, sparse MoE routing, and billion-parameter growth are not implemented; saving to disk is not SSD paging. Training and inference get slower as the dense model grows.
 
 ---
