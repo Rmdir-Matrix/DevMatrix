@@ -2,10 +2,9 @@
 matrix_data/
 *.matrix
 
-# Temporary test/dev artifacts & local Linux binary
+# Temporary test/dev artifacts & alternate Linux build
 *.test
 *.out
-/matrix
 /matrix-linux
 
 # Local test downloads and runtime builds
