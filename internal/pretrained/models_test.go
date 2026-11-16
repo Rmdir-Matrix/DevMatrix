@@ -17,7 +17,7 @@ func TestRecommendedModel(t *testing.T) {
 		want string
 	}{
 		{specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 3000}, smallModel.ID},
-		{specs.HardwareInfo{Detected: true, TotalRAMMB: 8192, AvailableRAMMB: 4096}, gemmaModel.ID},
+		{specs.HardwareInfo{Detected: true, TotalRAMMB: 8192, AvailableRAMMB: 4096}, smallModel.ID},
 		{specs.HardwareInfo{Detected: true, TotalRAMMB: 8192, AvailableRAMMB: 1900}, smallModel.ID},
 		{specs.HardwareInfo{Detected: false, TotalRAMMB: 16384, AvailableRAMMB: 8000}, smallModel.ID},
 	}

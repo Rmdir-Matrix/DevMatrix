@@ -18,6 +18,9 @@ import (
 const trainingReserveMB = 768
 const trainingRSSLimitMB = 768
 
+// 448 MiB is about 470 MB, leaving some margin below 500 MB.
+const smallCombinedRSSLimitMB = 448
+
 // Bound virtual memory and refuse to start when there is insufficient headroom.
 func trainingAddressLimit(hw specs.HardwareInfo) (int, error) {
 	if !hw.Detected {
@@ -54,7 +57,7 @@ func trainingBudgetFor(hw specs.HardwareInfo, s Settings) (trainingBudget, error
 	if !hw.Detected {
 		return trainingBudget{}, fmt.Errorf("cannot check available system memory; training is disabled for safety")
 	}
-	const minTrainerRSS = 384
+	const minTrainerRSS = 320
 	if hw.AvailableRAMMB < trainingReserveMB+minTrainerRSS {
 		return trainingBudget{}, fmt.Errorf("not enough available RAM (%d MiB); SmolLM2 needs at least %d MiB available (including %d MiB system reserve)", hw.AvailableRAMMB, trainingReserveMB+minTrainerRSS, trainingReserveMB)
 	}
@@ -66,8 +69,8 @@ func trainingBudgetFor(hw specs.HardwareInfo, s Settings) (trainingBudget, error
 		return trainingBudget{}, fmt.Errorf("not enough total RAM for low-memory training")
 	}
 	rssMB := hw.AvailableRAMMB - trainingReserveMB
-	if rssMB > trainingRSSLimitMB {
-		rssMB = trainingRSSLimitMB
+	if rssMB > smallCombinedRSSLimitMB {
+		rssMB = smallCombinedRSSLimitMB
 	}
 	return trainingBudget{addressMB: addressMB, rssMB: rssMB}, nil
 }
@@ -96,6 +99,20 @@ func readTrainingMemory(pid int) (int, int, error) {
 	return 0, 0, fmt.Errorf("cannot read trainer memory usage")
 }
 
+// Sum RSS of Matrix and its child. Shared pages may be counted twice; this
+// is conservative, but periodic sampling cannot enforce a hard peak limit.
+func readMatrixAndChildMemory(pid int) (int, int, error) {
+	available, childRSS, err := readTrainingMemory(pid)
+	if err != nil {
+		return 0, 0, err
+	}
+	_, selfRSS, err := readTrainingMemory(os.Getpid())
+	if err != nil {
+		return 0, 0, err
+	}
+	return available, childRSS + selfRSS, nil
+}
+
 func runTrainingGuarded(cmd *exec.Cmd, sample memorySampler, interval time.Duration, rssLimitMB int) error {
 	if err := cmd.Start(); err != nil {
 		return err
@@ -121,7 +138,7 @@ func runTrainingGuarded(cmd *exec.Cmd, sample memorySampler, interval time.Durat
 				} else if available < trainingReserveMB {
 					stop = fmt.Errorf("available RAM dropped to %d MB (reserve %d MB)", available, trainingReserveMB)
 				} else if rss > rssLimitMB {
-					stop = fmt.Errorf("trainer RAM reached %d MB (limit %d MB)", rss, rssLimitMB)
+					stop = fmt.Errorf("monitored process RAM reached %d MiB (limit %d MiB)", rss, rssLimitMB)
 				}
 				if stop != nil {
 					if cmd.Process.Kill() == nil {

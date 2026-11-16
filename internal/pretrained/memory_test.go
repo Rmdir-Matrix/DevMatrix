@@ -36,7 +36,7 @@ func TestMemoryGuardStopsTraining(t *testing.T) {
 		want   string
 	}{
 		{"low available", func(int) (int, int, error) { return 500, 30, nil }, "available RAM"},
-		{"high RSS", func(int) (int, int, error) { return 2000, 900, nil }, "trainer RAM"},
+		{"high RSS", func(int) (int, int, error) { return 2000, 900, nil }, "monitored process RAM"},
 		{"read failure", func(int) (int, int, error) { return 0, 0, errors.New("failed") }, "memory monitor failed"},
 	}
 	for _, tc := range tests {
@@ -65,8 +65,8 @@ func TestSmolTrainingBudget(t *testing.T) {
 		avail, address, rss int
 		fail                bool
 	}{
-		{3000, 1024, 768, false}, {1400, 1024, 632, false},
-		{1152, 1024, 384, false}, {1151, 0, 0, true},
+		{3000, 1024, 448, false}, {1200, 1024, 432, false},
+		{1088, 1024, 320, false}, {1087, 0, 0, true},
 	}
 	for _, c := range cases {
 		hw := specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: c.avail}
@@ -75,7 +75,7 @@ func TestSmolTrainingBudget(t *testing.T) {
 			t.Fatalf("avail %d: %+v %v", c.avail, got, err)
 		}
 	}
-	hw := specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 1200}
+	hw := specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 1100}
 	if _, err := trainingBudgetFor(hw, Settings{ModelID: smallModel.ID}); err == nil {
 		t.Fatal("unverified model received smaller budget")
 	}

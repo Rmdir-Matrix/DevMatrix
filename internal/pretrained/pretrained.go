@@ -371,7 +371,12 @@ func Generate(ctx context.Context, s Settings, history []Turn, input string) (st
 	stderr.limit = 64 << 10
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err = cmd.Run(); err != nil {
+	if s.ModelHash == smallModel.SHA {
+		err = runTrainingGuarded(cmd, readMatrixAndChildMemory, 50*time.Millisecond, smallCombinedRSSLimitMB)
+	} else {
+		err = cmd.Run()
+	}
+	if err != nil {
 		return "", fmt.Errorf("model failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	output := strings.TrimSpace(stdout.String())
@@ -447,11 +452,17 @@ func TrainNext(ctx context.Context, s *Settings, dir string, out io.Writer) erro
 	}
 	fmt.Fprintf(out, "  Low-memory training on %q (%s). This may be slow.\n", art.Title, art.Source)
 	fmt.Fprintf(out, "  Low-memory settings: context 64, batch 8; trainer address-space limit %d MiB.\n", budget.addressMB)
-	fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or trainer RSS exceeds %d MiB.\n", trainingReserveMB, budget.rssMB)
+	sampler := readTrainingMemory
+	if s.ModelHash == smallModel.SHA {
+		sampler = readMatrixAndChildMemory
+		fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or combined Matrix + trainer RSS exceeds %d MiB.\n", trainingReserveMB, budget.rssMB)
+	} else {
+		fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or trainer RSS exceeds %d MiB.\n", trainingReserveMB, budget.rssMB)
+	}
 	fmt.Fprintln(out, "  Sampling can miss spikes; previous weights remain safe if training stops.")
 	cmd.Stdout = out
 	cmd.Stderr = out
-	if err = runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond, budget.rssMB); err != nil {
+	if err = runTrainingGuarded(cmd, sampler, 50*time.Millisecond, budget.rssMB); err != nil {
 		return fmt.Errorf("training stopped; previous adapter preserved: %w", err)
 	}
 	if err = ggufFile(next); err != nil {
@@ -517,8 +528,8 @@ func Run(r *bufio.Reader, w io.Writer, dir string, forceSetup, autoChat, autoTra
 	}
 	hw := specs.DetectHardware()
 	recommend := recommendedModel(hw)
-	if modelID(s) == gemmaModel.ID && recommend.ID == smallModel.ID && !forceSetup {
-		fmt.Fprintf(w, "\n  Hardware check: %s is smaller and recommended for this PC. Your current model and adapter will be kept unless you choose to switch.\n", recommend.Name)
+	if s.ModelHash != smallModel.SHA && (modelID(s) == gemmaModel.ID || modelID(s) == smallModel.ID) && !forceSetup {
+		fmt.Fprintf(w, "\n  Recommended low-memory model: %s. Your current model and adapter will be kept unless you choose to switch.\n", recommend.Name)
 		answer, e := prompt(r, w, "  Open setup to switch models (then choose 1)? [y/N]: ")
 		if e != nil && e != io.EOF {
 			return e

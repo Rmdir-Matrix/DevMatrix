@@ -22,7 +22,7 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-const appVersion = "1.2.1"
+const appVersion = "1.3.0"
 
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "Directory for Matrix saves and configuration (default: ./matrix_data)")
@@ -166,7 +166,7 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 	fmt.Fprintf(out, "  Available RAM   : %s\n", specs.FormatRAM(hw.AvailableRAMMB))
 	fmt.Fprintf(out, "  Recommended AI  : %s\n", pretrained.RecommendedModelName(hw))
 	fmt.Fprintf(out, "  Legacy Target   : %d MB (%s Tier)\n", prof.RAMBudgetMB, prof.TierName)
-	fmt.Fprintln(out, "  Pretrained train: up to 1024 MiB virtual space; sampled RSS guard up to 768 MiB")
+	fmt.Fprintln(out, "  SmolLM2 target  : combined sampled RSS under 448 MiB; 768 MiB system reserve")
 	fmt.Fprintf(out, "  Legacy GPT      : %d layers × %d heads • %dD embed • %d FFN • %d max vocab • %d threads\n",
 		prof.NumLayers, prof.NumHeads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
 }

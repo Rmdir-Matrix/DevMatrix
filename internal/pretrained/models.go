@@ -17,9 +17,9 @@ type modelSpec struct {
 }
 
 var smallModel = modelSpec{
-	ID: "smollm2-135m", Name: "SmolLM2 135M Instruct Q4", Filename: "SmolLM2-135M-Instruct.Q4_K_M.gguf",
-	URL: "https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/a6b7826ed969c3926a98359e39912af137b464cb/SmolLM2-135M-Instruct.Q4_K_M.gguf",
-	SHA: "8030f04528538d47bda434f6f0bdf3952c40a58123e4d5e755332f23731a8684", Format: "chatml", License: "Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0", SizeMB: 105,
+	ID: "smollm2-135m", Name: "SmolLM2 135M Instruct Q4_1 (English)", Filename: "SmolLM2-135M-Instruct.Q4_1.gguf",
+	URL: "https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/ab810cf68114990406fdf996510dd3d3c6adbdf5/SmolLM2-135M-Instruct.Q4_1.gguf",
+	SHA: "b179c9523d0e6a0f98a330c7562b682750a6f8c8c15e5bc70ea373728110db53", Format: "chatml", License: "Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0", SizeMB: 98,
 }
 var gemmaModel = modelSpec{
 	ID: "gemma-270m", Name: "Gemma 3 270M Instruct Q4", Filename: "gemma-3-270m-it-Q4_K_M.gguf",
@@ -27,14 +27,9 @@ var gemmaModel = modelSpec{
 	SHA: "b1baabd6b729e4041822220d3e648e00d99cac5df86b10dffb77bcccf0688e39", Format: "gemma", License: "Gemma terms: https://ai.google.dev/gemma/terms", SizeMB: 253,
 }
 
-// Selection is deliberately conservative. Free RAM varies, so it is checked
-// during actual execution too. Neither choice guarantees that training fits.
-func recommendedModel(hw specs.HardwareInfo) modelSpec {
-	if hw.Detected && hw.TotalRAMMB >= 6144 && hw.AvailableRAMMB >= 2560 {
-		return gemmaModel
-	}
-	return smallModel
-}
+// This English-focused model is chosen for the sub-500 MB target on all hardware.
+// Specs still determine CPU threading and whether enough RAM is available to run.
+func recommendedModel(_ specs.HardwareInfo) modelSpec   { return smallModel }
 func RecommendedModelName(hw specs.HardwareInfo) string { return recommendedModel(hw).Name }
 func modelID(s Settings) string {
 	if s.ModelID != "" {

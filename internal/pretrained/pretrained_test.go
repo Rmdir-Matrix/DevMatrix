@@ -152,8 +152,7 @@ func TestRealEngineSmoke(t *testing.T) {
 	}
 }
 
-// Optional real-model budget test. A comparable fixture can exercise the
-// policy, but cannot certify a different quantization's memory requirements.
+// Optional real-model budget test. Use the exact pinned Q4_1 weights.
 func TestRealSmallBudget(t *testing.T) {
 	bin, model := os.Getenv("MATRIX_TEST_RUNTIME"), os.Getenv("MATRIX_TEST_GGUF")
 	if bin == "" || model == "" || os.Getenv("MATRIX_TEST_SMOL_POLICY") != "1" {
@@ -161,6 +160,9 @@ func TestRealSmallBudget(t *testing.T) {
 	}
 	bin, _ = filepath.Abs(bin)
 	model, _ = filepath.Abs(model)
+	if err := checkSHA(model, smallModel.SHA); err != nil {
+		t.Fatalf("expected the exact recommended model: %v", err)
+	}
 	dir := t.TempDir()
 	text := filepath.Join(dir, "train.txt")
 	if err := os.WriteFile(text, []byte(strings.Repeat("A dictionary defines words and explains their meanings. ", 24)), 0600); err != nil {
@@ -168,7 +170,7 @@ func TestRealSmallBudget(t *testing.T) {
 	}
 	out := filepath.Join(dir, "adapter.gguf")
 	s := Settings{Model: model, RuntimeDir: bin, ModelHash: smallModel.SHA}
-	budget, err := trainingBudgetFor(specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 1152}, s)
+	budget, err := trainingBudgetFor(specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 1088}, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +182,7 @@ func TestRealSmallBudget(t *testing.T) {
 	var logs bytes.Buffer
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
-	if err := runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond, budget.rssMB); err != nil {
+	if err := runTrainingGuarded(cmd, readMatrixAndChildMemory, 50*time.Millisecond, budget.rssMB); err != nil {
 		t.Fatalf("training: %v\n%s", err, logs.String())
 	}
 	if err := ggufFile(out); err != nil {
