@@ -1,4 +1,29 @@
-# Matrix — On-Device AI Study Buddy CLI
+# Matrix — Pretrained Study Buddy (Linux x86-64)
+
+Matrix now defaults to a pretrained **Gemma 3 270M instruction model**, not the old scratch-trained network. It uses a CPU-only QVAC llama.cpp runtime, downloaded during setup, and stores the frozen base model plus trained LoRA adapter on your chosen SSD. The model and runtime are separate files; `matrix` remains the main app. Linux x86-64 is the supported target for this new mode.
+
+## Getting started
+
+```bash
+chmod +x ./matrix
+./matrix
+# Optional: keep configuration and study notes on your SSD too
+./matrix --data-dir /path/to/ssd/matrix_data
+```
+
+Setup asks for a name and an SSD folder, and offers to download the ~253 MB Gemma GGUF and ~36 MB CPU runtime after you accept the [Gemma terms](https://ai.google.dev/gemma/terms). Downloads are SHA-256 checked. Alternatively, supply a compatible Gemma 3 270M IT GGUF and a directory containing QVAC `llama-cli` and `llama-finetune-lora`. `prlimit` (provided by `util-linux`) must be installed. For repeat setup, use `./matrix --setup`.
+
+Choose **Chat** to talk to the pretrained model without retrieval; **Train one item** runs a real CPU LoRA update and saves an adapter, leaving the base weights intact. Training follows the existing dictionary-first, grammar-second article curriculum. It can be slow and may fail if memory is tight or the runtime/model combination is incompatible; a failed run preserves the previous adapter and curriculum position. Each successful run updates adapter weights, not the 270M frozen base weights. Fine-tuning can reduce quality or overfit; improvement is not guaranteed.
+
+The child runtime has a 1.5 GiB inference / 1.75 GiB training address-space limit (lower on smaller systems), and checks available RAM before starting. This is **not** a guarantee that all programs together stay under 4 GB. Close other programs before training; model loading, the OS, and other apps also use memory. GPU acceleration is disabled. The Gemma download and Gemma-specific training path have not been tested in the restricted build environment; the runner and real LoRA updates were tested with a much smaller GGUF fixture instead.
+
+The new pretrained mode does **not** yet support `.matrix` sharing, the old `/study`/`/define` commands, or parameter growth. Existing brains and `.matrix` files are untouched; use `./matrix --legacy` for the previous app and its sharing tools. Old scratch-trained brains cannot be converted into Gemma weights.
+
+---
+
+## Legacy mode documentation
+
+The sections below describe the previous app, available with `--legacy`, not the default pretrained mode.
 
 **Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). Matrix uses an experimental small **100% Closed-Book Multi-Layer, Multi-Head Decoder-Only GPT Transformer** (`Pre-RMSNorm` + `Multi-Head Causal Self-Attention` + `SiLU Feed-Forward MLP` + `Exact Full-Vocabulary Weight-Tied Softmax`). Zero text databases, zero passage lookup tables, and zero RAG retrieval are used at chat time — model-generated chat text comes from trained Transformer `float32` weights; uncertainty messages and CLI tools are application text. It is not comparable in capability to ChatGPT.
 

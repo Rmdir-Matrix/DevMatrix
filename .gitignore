@@ -7,3 +7,6 @@ matrix_data/
 *.out
 /matrix
 /matrix-linux
+
+# Local test downloads and runtime builds
+.cache/

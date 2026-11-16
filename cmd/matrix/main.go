@@ -15,13 +15,14 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/config"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/corpus"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/platform"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/pretrained"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/share"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/trainer"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
 
-const appVersion = "1.0.0"
+const appVersion = "1.1.0"
 
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "Directory for Matrix saves and configuration (default: ./matrix_data)")
@@ -33,6 +34,7 @@ func main() {
 	importPath := flag.String("import", "", "Import a shared .matrix file on startup")
 	showSpecsOnly := flag.Bool("specs", false, "Print detected hardware specs and auto-optimized AI profile, then exit")
 	showVersion := flag.Bool("version", false, "Print Matrix version and exit")
+	legacy := flag.Bool("legacy", false, "Use the older from-scratch Matrix instead of the pretrained model")
 	noColor := flag.Bool("no-color", false, "Disable ANSI terminal colors")
 	flag.Parse()
 
@@ -59,6 +61,22 @@ func main() {
 	cfg, setupDone, err := config.Load(dataDir, hw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not read existing config (%v); starting setup.\n", err)
+	}
+
+	if !*legacy && runtime.GOOS == "linux" {
+		if *importPath != "" || *exportPath != "" {
+			fmt.Fprintln(os.Stderr, "Pretrained model sharing is not implemented yet; use --legacy only for old .matrix files.")
+			os.Exit(1)
+		}
+		if err := pretrained.Run(bufio.NewReader(os.Stdin), os.Stdout, dataDir, *forceSetup, *autoChat, *autoTrain); err != nil {
+			fmt.Fprintln(os.Stderr, "Matrix:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if !*legacy && runtime.GOOS != "linux" {
+		fmt.Fprintln(os.Stderr, "Pretrained mode currently supports Linux; starting legacy mode.")
 	}
 
 	// Non-interactive CLI --export shortcut
@@ -147,7 +165,7 @@ func printSpecsDiagnostic(out io.Writer, theme ui.Theme, hw specs.HardwareInfo) 
 	fmt.Fprintf(out, "  Total RAM       : %s (auto-detected: %v)\n", specs.FormatRAM(hw.TotalRAMMB), hw.Detected)
 	fmt.Fprintf(out, "  Available RAM   : %s\n", specs.FormatRAM(hw.AvailableRAMMB))
 	fmt.Fprintf(out, "  Memory Target   : %d MB (%s Tier)\n", prof.RAMBudgetMB, prof.TierName)
-	fmt.Fprintf(out, "  GPT Capacity    : %d layers × %d heads • %dD embed • %d FFN • %d max vocab • %d threads\n",
+	fmt.Fprintf(out, "  Legacy GPT      : %d layers × %d heads • %dD embed • %d FFN • %d max vocab • %d threads\n",
 		prof.NumLayers, prof.NumHeads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, prof.WorkerThreads)
 }
 
