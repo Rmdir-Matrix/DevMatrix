@@ -1,4 +1,4 @@
-// Package pretrained runs Gemma locally through the CPU-only QVAC llama.cpp
+// Package pretrained runs small local models through the CPU-only QVAC llama.cpp
 // tools. The base weights remain frozen; training writes a separate LoRA.
 package pretrained
 
@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +20,6 @@ import (
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 )
 
-const modelFile = "gemma-3-270m-it-Q4_K_M.gguf"
-const defaultModelURL = "https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/resolve/37cbb6e/gemma-3-270m-it-Q4_K_M.gguf"
-const modelSHA = "b1baabd6b729e4041822220d3e648e00d99cac5df86b10dffb77bcccf0688e39"
 const runtimeURL = "https://github.com/tetherto/qvac-fabric-llm.cpp/releases/download/b7349/llama-b7349-bin-ubuntu-x64.tar.gz"
 const runtimeSHA = "f9490b999f5f49535dea67d7fe5c839b76b011a93703c53226f8330f4b53eb23"
 
@@ -31,6 +29,8 @@ type Settings struct {
 	RuntimeDir string          `json:"runtime_dir"`
 	StorageDir string          `json:"storage_dir"`
 	ModelHash  string          `json:"model_hash"`
+	ModelID    string          `json:"model_id,omitempty"`
+	ChatFormat string          `json:"chat_format,omitempty"`
 	Adapter    string          `json:"adapter"`
 	Seen       map[string]bool `json:"seen"`
 	Sessions   int             `json:"sessions"`
@@ -112,22 +112,30 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return old, fmt.Errorf("pretrained setup currently supports Linux x86-64 only")
 	}
-	name, e := prompt(r, w, "  Study buddy name [Matrix]: ")
+	defaultName := old.Name
+	if defaultName == "" {
+		defaultName = "Matrix"
+	}
+	name, e := prompt(r, w, "  Study buddy name ["+defaultName+"]: ")
 	if e != nil {
 		return old, e
 	}
 	if name == "" {
-		name = "Matrix"
+		name = defaultName
 	}
 	if len(name) > 64 {
 		name = name[:64]
 	}
-	storage, e := prompt(r, w, "  SSD storage folder ["+dir+"]: ")
+	defaultStorage := old.StorageDir
+	if defaultStorage == "" {
+		defaultStorage = dir
+	}
+	storage, e := prompt(r, w, "  SSD storage folder ["+defaultStorage+"]: ")
 	if e != nil {
 		return old, e
 	}
 	if storage == "" {
-		storage = dir
+		storage = defaultStorage
 	}
 	storage, e = filepath.Abs(storage)
 	if e != nil {
@@ -137,31 +145,48 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 		return old, e
 	}
 	fmt.Fprintln(w, "\n  Setup stores the model, runtime and trained adapters under:", storage)
-	fmt.Fprintln(w, "  Gemma 3 270M IT Q4 (~253 MB) is subject to Google's Gemma terms:")
-	fmt.Fprintln(w, "  https://ai.google.dev/gemma/terms")
-	fmt.Fprintln(w, "  QVAC llama.cpp CPU tools (~36 MB) are downloaded separately. Internet required.")
-	fmt.Fprintln(w, "  [1] Download model and runtime  [2] Use existing files  [Q] Cancel")
-	choice, e := prompt(r, w, "  Choice [1]: ")
+	hw := specs.DetectHardware()
+	selected := recommendedModel(hw)
+	if hw.Detected {
+		fmt.Fprintf(w, "  Detected RAM: %s total, %s available; CPU cores: %d.\n", specs.FormatRAM(hw.TotalRAMMB), specs.FormatRAM(hw.AvailableRAMMB), hw.CPUCores)
+	} else {
+		fmt.Fprintln(w, "  RAM detection failed; using the smallest model recommendation.")
+	}
+	fmt.Fprintf(w, "  Recommended: %s (~%d MB download).\n", selected.Name, selected.SizeMB)
+	fmt.Fprintln(w, "  Smaller models save memory but can give weaker answers. RAM use depends on workload.")
+	fmt.Fprintln(w, "  QVAC CPU tools (~36 MB) are downloaded separately. Internet required.")
+	choiceDefault := "1"
+	if old.Model != "" {
+		choiceDefault = "3"
+		fmt.Fprintf(w, "  Current model: %s\n", old.Model)
+	}
+	fmt.Fprintln(w, "  [1] Download recommended model  [2] Use existing files  [3] Keep current model  [Q] Cancel")
+	choice, e := prompt(r, w, "  Choice ["+choiceDefault+"]: ")
 	if e != nil {
 		return old, e
 	}
+	if choice == "" {
+		choice = choiceDefault
+	}
 	s := Settings{Name: name, StorageDir: storage, Seen: map[string]bool{}}
 	switch strings.ToLower(choice) {
-	case "", "1":
-		agree, e := prompt(r, w, "  Accept the Gemma terms and download? [y/N]: ")
+	case "1":
+		fmt.Fprintln(w, "  Model license:", selected.License)
+		agree, e := prompt(r, w, "  Accept the model license and download? [y/N]: ")
 		if e != nil {
 			return old, e
 		}
 		if !strings.EqualFold(agree, "y") && !strings.EqualFold(agree, "yes") {
 			return old, fmt.Errorf("setup cancelled; no model downloaded")
 		}
-		s.Model = filepath.Join(storage, "models", modelFile)
+		s.ModelID, s.ChatFormat = selected.ID, selected.Format
+		s.Model = filepath.Join(storage, "models", selected.Filename)
 		s.RuntimeDir = filepath.Join(storage, "runtime-b7349")
 		if e = os.MkdirAll(filepath.Dir(s.Model), 0700); e != nil {
 			return old, e
 		}
 		fmt.Fprintln(w, "  Downloading and verifying the model (this may take a while)...")
-		if e = downloadVerified(context.Background(), defaultModelURL, s.Model, modelSHA, 400<<20); e != nil {
+		if e = downloadVerified(context.Background(), selected.URL, s.Model, selected.SHA, 400<<20); e != nil {
 			return old, fmt.Errorf("model download: %w", e)
 		}
 		if _, statErr := os.Stat(s.RuntimeDir); os.IsNotExist(statErr) {
@@ -180,7 +205,27 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 			fmt.Fprintln(w, "  Reusing existing CPU runtime.")
 		}
 	case "2":
-		s.Model, e = prompt(r, w, "  Path to Gemma 3 270M IT GGUF: ")
+		fmt.Fprintln(w, "  Chat format: [1] SmolLM2 / ChatML  [2] Gemma 3")
+		format, ferr := prompt(r, w, "  Chat format ["+map[bool]string{true: "1", false: "2"}[selected.Format == "chatml"]+"]: ")
+		if ferr != nil {
+			return old, ferr
+		}
+		if format == "" {
+			if selected.Format == "chatml" {
+				format = "1"
+			} else {
+				format = "2"
+			}
+		}
+		switch format {
+		case "1":
+			s.ModelID, s.ChatFormat = smallModel.ID, smallModel.Format
+		case "2":
+			s.ModelID, s.ChatFormat = gemmaModel.ID, gemmaModel.Format
+		default:
+			return old, fmt.Errorf("invalid chat format")
+		}
+		s.Model, e = prompt(r, w, "  Path to the GGUF file: ")
 		if e != nil {
 			return old, e
 		}
@@ -196,6 +241,11 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 		if e != nil {
 			return old, e
 		}
+	case "3":
+		if old.Model == "" {
+			return old, fmt.Errorf("no current model; run setup again")
+		}
+		s.Model, s.RuntimeDir, s.ModelID, s.ChatFormat = old.Model, old.RuntimeDir, old.ModelID, old.ChatFormat
 	default:
 		return old, fmt.Errorf("setup cancelled")
 	}
@@ -206,10 +256,8 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 	if e != nil {
 		return old, e
 	}
-	if old.ModelHash != "" && old.ModelHash == s.ModelHash && old.Adapter != "" {
-		s.Adapter = old.Adapter
-		s.Seen = old.Seen
-		s.Sessions = old.Sessions
+	if e = applyModelProfile(dir, old, &s); e != nil {
+		return old, e
 	}
 	if e = Validate(s); e != nil {
 		return old, e
@@ -256,7 +304,15 @@ func child(ctx context.Context, s Settings, tool string, args ...string) (*exec.
 	return cmd, nil
 }
 func common(s Settings) []string {
-	return []string{"-m", s.Model, "-ngl", "0", "-t", "2", "-tb", "2", "--no-warmup"}
+	threads := runtime.NumCPU()
+	if threads > 2 {
+		threads = 2
+	}
+	if threads < 1 {
+		threads = 1
+	}
+	n := strconv.Itoa(threads)
+	return []string{"-m", s.Model, "-ngl", "0", "-t", n, "-tb", n, "--no-warmup"}
 }
 
 type Turn struct{ User, Assistant string }
@@ -279,6 +335,23 @@ func gemmaPrompt(name string, history []Turn, input string) string {
 	p.WriteString("<end_of_turn>\n<start_of_turn>model\n")
 	return p.String()
 }
+func renderPrompt(s Settings, history []Turn, input string) string {
+	if modelFormat(s) != "chatml" {
+		return gemmaPrompt(s.Name, history, input)
+	}
+	clean := func(v string) string {
+		v = strings.ReplaceAll(v, "<|im_start|>", "")
+		v = strings.ReplaceAll(v, "<|im_end|>", "")
+		return v
+	}
+	var p strings.Builder
+	p.WriteString("<|im_start|>system\nYou are " + clean(s.Name) + ", a helpful study buddy. Give clear answers and admit uncertainty.<|im_end|>\n")
+	for _, t := range history {
+		p.WriteString("<|im_start|>user\n" + clean(t.User) + "<|im_end|>\n<|im_start|>assistant\n" + clean(t.Assistant) + "<|im_end|>\n")
+	}
+	p.WriteString("<|im_start|>user\n" + clean(input) + "<|im_end|>\n<|im_start|>assistant\n")
+	return p.String()
+}
 func Generate(ctx context.Context, s Settings, history []Turn, input string) (string, error) {
 	if err := Validate(s); err != nil {
 		return "", err
@@ -289,7 +362,7 @@ func Generate(ctx context.Context, s Settings, history []Turn, input string) (st
 	if len(history) > 2 {
 		history = history[len(history)-2:]
 	}
-	args := append(common(s), "-c", "1024", "-b", "64", "-ub", "32", "-n", "160", "--no-conversation", "--no-display-prompt", "--simple-io", "-p", gemmaPrompt(s.Name, history, input))
+	args := append(common(s), "-c", "1024", "-b", "64", "-ub", "32", "-n", "160", "--no-conversation", "--no-display-prompt", "--simple-io", "-p", renderPrompt(s, history, input))
 	if s.Adapter != "" {
 		args = append(args, "--lora", s.Adapter)
 	}
@@ -442,7 +515,23 @@ func Run(r *bufio.Reader, w io.Writer, dir string, forceSetup, autoChat, autoTra
 			return fmt.Errorf("model changed or is corrupted; run --setup again: %w", err)
 		}
 	}
-	fmt.Fprintf(w, "\n  %s uses a local pretrained GGUF model. LoRA sessions: %d.\n", s.Name, s.Sessions)
+	hw := specs.DetectHardware()
+	recommend := recommendedModel(hw)
+	if modelID(s) == gemmaModel.ID && recommend.ID == smallModel.ID && !forceSetup {
+		fmt.Fprintf(w, "\n  Hardware check: %s is smaller and recommended for this PC. Your current model and adapter will be kept unless you choose to switch.\n", recommend.Name)
+		answer, e := prompt(r, w, "  Open setup to switch models (then choose 1)? [y/N]: ")
+		if e != nil && e != io.EOF {
+			return e
+		}
+		if strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes") {
+			if updated, e := Setup(r, w, dir, s); e != nil {
+				fmt.Fprintln(w, "  Setup:", e)
+			} else {
+				s = updated
+			}
+		}
+	}
+	fmt.Fprintf(w, "\n  %s uses model %s. LoRA sessions: %d.\n", s.Name, filepath.Base(s.Model), s.Sessions)
 	fmt.Fprintln(w, "  CPU only; the runtime has an address-space limit, not a whole-system RAM guarantee.")
 	action := ""
 	if autoChat {
