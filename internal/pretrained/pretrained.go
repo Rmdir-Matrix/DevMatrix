@@ -231,24 +231,24 @@ func child(ctx context.Context, s Settings, tool string, args ...string) (*exec.
 		return nil, fmt.Errorf("install util-linux (prlimit) to enforce a runtime memory limit: %w", e)
 	}
 	hw := specs.DetectHardware()
-	minAvail := 1024
-	if tool == "llama-finetune-lora" {
-		minAvail = 1900
-	}
-	if hw.Detected && hw.AvailableRAMMB < minAvail {
-		return nil, fmt.Errorf("not enough available RAM (%d MB); close programs to free at least %d MB", hw.AvailableRAMMB, minAvail)
-	}
 	mb := 1536
 	if tool == "llama-finetune-lora" {
-		mb = 1792
+		mb, e = trainingAddressLimit(hw)
+		if e != nil {
+			return nil, e
+		}
+	} else {
+		if hw.Detected && hw.AvailableRAMMB < 1024 {
+			return nil, fmt.Errorf("not enough available RAM (%d MB); close programs to free at least 1024 MB", hw.AvailableRAMMB)
+		}
+		if hw.Detected && hw.TotalRAMMB/2 < mb {
+			mb = hw.TotalRAMMB / 2
+		}
+		if mb < 512 {
+			return nil, fmt.Errorf("not enough total RAM for local inference")
+		}
 	}
-	// Restrict to no more than half total RAM (leaves room for OS and Matrix).
-	if hw.Detected && hw.TotalRAMMB/2 < mb {
-		mb = hw.TotalRAMMB / 2
-	}
-	if mb < 512 {
-		return nil, fmt.Errorf("not enough total RAM for local inference")
-	}
+
 	binary := filepath.Join(s.RuntimeDir, tool)
 	all := append([]string{fmt.Sprintf("--as=%d", int64(mb)*1024*1024), "--", binary}, args...)
 	cmd := exec.CommandContext(ctx, limit, all...)
@@ -364,7 +364,7 @@ func TrainNext(ctx context.Context, s *Settings, dir string, out io.Writer) erro
 	}
 	_ = os.Remove(next)
 	defer os.Remove(next)
-	args := append(common(*s), "-f", data.Name(), "-c", "128", "-b", "32", "-ub", "32", "-fa", "off", "--lora-rank", "4", "--lora-alpha", "8", "--lora-modules", "attn_q,attn_v", "--num-epochs", "1", "--learning-rate", "0.00001", "--checkpoint-save-steps", "0", "--output-adapter", next)
+	args := append(common(*s), "-f", data.Name(), "-c", "64", "-b", "8", "-ub", "8", "-fa", "off", "--lora-rank", "4", "--lora-alpha", "8", "--lora-modules", "attn_q,attn_v", "--num-epochs", "1", "--learning-rate", "0.00001", "--checkpoint-save-steps", "0", "--output-adapter", next)
 	if s.Adapter != "" {
 		args = append(args, "--lora", s.Adapter)
 	}
@@ -372,11 +372,14 @@ func TrainNext(ctx context.Context, s *Settings, dir string, out io.Writer) erro
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "  Fine-tuning on %q (%s). CPU training can be slow.\n", art.Title, art.Source)
+	fmt.Fprintf(out, "  Low-memory training on %q (%s). This may be slow.\n", art.Title, art.Source)
+	fmt.Fprintf(out, "  Low-memory settings: context 64, batch 8; trainer address-space limit up to 1024 MiB.\n")
+	fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or trainer RSS exceeds %d MiB.\n", trainingReserveMB, trainingRSSLimitMB)
+	fmt.Fprintln(out, "  Sampling can miss spikes; previous weights remain safe if training stops.")
 	cmd.Stdout = out
 	cmd.Stderr = out
-	if err = cmd.Run(); err != nil {
-		return fmt.Errorf("training failed; previous adapter preserved: %w", err)
+	if err = runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond); err != nil {
+		return fmt.Errorf("training stopped; previous adapter preserved: %w", err)
 	}
 	if err = ggufFile(next); err != nil {
 		return fmt.Errorf("trainer did not produce a valid adapter: %w", err)

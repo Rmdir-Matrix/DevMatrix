@@ -47,13 +47,11 @@ func detectOSMemoryMB() (totalMB int, availMB int, ok bool) {
 			totalMB = int(memTotalKB / 1024)
 			availMB = int(memAvailKB / 1024)
 
-			// Respect cgroup v2 memory limit if running inside a memory-constrained container
-			if cgMaxMB := readCgroupMemoryMaxMB(); cgMaxMB > 0 && cgMaxMB < totalMB {
-				totalMB = cgMaxMB
-				if availMB > totalMB {
-					availMB = int(float64(totalMB) * 0.75)
-				}
-			}
+			// A container may have much less memory available than the host reports.
+			// Use limit minus current usage (conservatively ignoring reclaimable cache).
+			cgMaxMB := readCgroupMemoryMaxMB()
+			cgCurrentMB := readCgroupMemoryCurrentMB()
+			totalMB, availMB = capCgroupMemory(totalMB, availMB, cgMaxMB, cgCurrentMB)
 			return totalMB, availMB, true
 		}
 	}
@@ -86,4 +84,39 @@ func readCgroupMemoryMaxMB() int {
 		return 0
 	}
 	return int(bytesVal / (1024 * 1024))
+}
+
+// capCgroupMemory applies a cgroup v2 limit and current usage to host values.
+func capCgroupMemory(total, available, limit, used int) (int, int) {
+	if limit <= 0 {
+		return total, available
+	}
+	if total > limit {
+		total = limit
+	}
+	remaining := limit / 2 // conservative fallback if current usage is unavailable
+	if used >= 0 {
+		remaining = limit - used
+	}
+	if remaining < 1 {
+		remaining = 1
+	} // don't trigger DetectHardware's invalid-value fallback
+	if available > remaining {
+		available = remaining
+	}
+	if available > total {
+		available = total
+	}
+	return total, available
+}
+func readCgroupMemoryCurrentMB() int {
+	data, err := os.ReadFile("/sys/fs/cgroup/memory.current")
+	if err != nil {
+		return -1
+	}
+	val, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil || val > 1<<50 {
+		return -1
+	}
+	return int((val + 1024*1024 - 1) / (1024 * 1024))
 }
