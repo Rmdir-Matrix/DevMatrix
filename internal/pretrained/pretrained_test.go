@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 )
 
 func TestGemmaPromptAndBoundedOutput(t *testing.T) {
@@ -146,5 +149,41 @@ func TestRealEngineSmoke(t *testing.T) {
 	loaded, err := Load(dir)
 	if err != nil || loaded.Sessions != 2 || loaded.Adapter != s.Adapter {
 		t.Fatal("state did not persist", err)
+	}
+}
+
+// Optional real-model budget test. A comparable fixture can exercise the
+// policy, but cannot certify a different quantization's memory requirements.
+func TestRealSmallBudget(t *testing.T) {
+	bin, model := os.Getenv("MATRIX_TEST_RUNTIME"), os.Getenv("MATRIX_TEST_GGUF")
+	if bin == "" || model == "" || os.Getenv("MATRIX_TEST_SMOL_POLICY") != "1" {
+		t.Skip("set runtime, model and MATRIX_TEST_SMOL_POLICY=1")
+	}
+	bin, _ = filepath.Abs(bin)
+	model, _ = filepath.Abs(model)
+	dir := t.TempDir()
+	text := filepath.Join(dir, "train.txt")
+	if err := os.WriteFile(text, []byte(strings.Repeat("A dictionary defines words and explains their meanings. ", 24)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "adapter.gguf")
+	s := Settings{Model: model, RuntimeDir: bin, ModelHash: smallModel.SHA}
+	budget, err := trainingBudgetFor(specs.HardwareInfo{Detected: true, TotalRAMMB: 4096, AvailableRAMMB: 1152}, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := append(common(s), "-f", text, "-c", "64", "-b", "8", "-ub", "8", "-fa", "off", "--lora-rank", "4", "--lora-alpha", "8", "--lora-modules", "attn_q,attn_v", "--num-epochs", "1", "--learning-rate", "0.00001", "--checkpoint-save-steps", "0", "--output-adapter", out)
+	cmd, err := childWithLimit(context.Background(), s, "llama-finetune-lora", budget.addressMB, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	if err := runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond, budget.rssMB); err != nil {
+		t.Fatalf("training: %v\n%s", err, logs.String())
+	}
+	if err := ggufFile(out); err != nil {
+		t.Fatal(err)
 	}
 }

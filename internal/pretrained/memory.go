@@ -39,6 +39,39 @@ func trainingAddressLimit(hw specs.HardwareInfo) (int, error) {
 	return limit, nil
 }
 
+// The catalog's exact SmolLM2 weights get a separate policy; manually chosen
+// files cannot opt in by name alone. Virtual address space is not resident RAM.
+type trainingBudget struct {
+	addressMB int
+	rssMB     int
+}
+
+func trainingBudgetFor(hw specs.HardwareInfo, s Settings) (trainingBudget, error) {
+	if s.ModelHash != smallModel.SHA {
+		limit, err := trainingAddressLimit(hw)
+		return trainingBudget{addressMB: limit, rssMB: trainingRSSLimitMB}, err
+	}
+	if !hw.Detected {
+		return trainingBudget{}, fmt.Errorf("cannot check available system memory; training is disabled for safety")
+	}
+	const minTrainerRSS = 384
+	if hw.AvailableRAMMB < trainingReserveMB+minTrainerRSS {
+		return trainingBudget{}, fmt.Errorf("not enough available RAM (%d MiB); SmolLM2 needs at least %d MiB available (including %d MiB system reserve)", hw.AvailableRAMMB, trainingReserveMB+minTrainerRSS, trainingReserveMB)
+	}
+	addressMB := 1024
+	if hw.TotalRAMMB/2 < addressMB {
+		addressMB = hw.TotalRAMMB / 2
+	}
+	if addressMB < 640 {
+		return trainingBudget{}, fmt.Errorf("not enough total RAM for low-memory training")
+	}
+	rssMB := hw.AvailableRAMMB - trainingReserveMB
+	if rssMB > trainingRSSLimitMB {
+		rssMB = trainingRSSLimitMB
+	}
+	return trainingBudget{addressMB: addressMB, rssMB: rssMB}, nil
+}
+
 type memorySampler func(pid int) (availableMB, rssMB int, err error)
 
 func readTrainingMemory(pid int) (int, int, error) {
@@ -63,7 +96,7 @@ func readTrainingMemory(pid int) (int, int, error) {
 	return 0, 0, fmt.Errorf("cannot read trainer memory usage")
 }
 
-func runTrainingGuarded(cmd *exec.Cmd, sample memorySampler, interval time.Duration) error {
+func runTrainingGuarded(cmd *exec.Cmd, sample memorySampler, interval time.Duration, rssLimitMB int) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -87,8 +120,8 @@ func runTrainingGuarded(cmd *exec.Cmd, sample memorySampler, interval time.Durat
 					stop = fmt.Errorf("memory monitor failed: %w", err)
 				} else if available < trainingReserveMB {
 					stop = fmt.Errorf("available RAM dropped to %d MB (reserve %d MB)", available, trainingReserveMB)
-				} else if rss > trainingRSSLimitMB {
-					stop = fmt.Errorf("trainer RAM reached %d MB (limit %d MB)", rss, trainingRSSLimitMB)
+				} else if rss > rssLimitMB {
+					stop = fmt.Errorf("trainer RAM reached %d MB (limit %d MB)", rss, rssLimitMB)
 				}
 				if stop != nil {
 					if cmd.Process.Kill() == nil {

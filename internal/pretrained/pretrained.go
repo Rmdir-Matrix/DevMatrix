@@ -270,7 +270,7 @@ func Setup(r *bufio.Reader, w io.Writer, dir string, old Settings) (Settings, er
 
 // child uses a strict Linux address-space limit in addition to the free-RAM
 // check. It is not a guarantee about total system RAM or other processes.
-func child(ctx context.Context, s Settings, tool string, args ...string) (*exec.Cmd, error) {
+func childWithLimit(ctx context.Context, s Settings, tool string, mb int, args ...string) (*exec.Cmd, error) {
 	if runtime.GOOS != "linux" {
 		return nil, fmt.Errorf("pretrained runtime requires Linux")
 	}
@@ -278,31 +278,27 @@ func child(ctx context.Context, s Settings, tool string, args ...string) (*exec.
 	if e != nil {
 		return nil, fmt.Errorf("install util-linux (prlimit) to enforce a runtime memory limit: %w", e)
 	}
-	hw := specs.DetectHardware()
-	mb := 1536
-	if tool == "llama-finetune-lora" {
-		mb, e = trainingAddressLimit(hw)
-		if e != nil {
-			return nil, e
-		}
-	} else {
-		if hw.Detected && hw.AvailableRAMMB < 1024 {
-			return nil, fmt.Errorf("not enough available RAM (%d MB); close programs to free at least 1024 MB", hw.AvailableRAMMB)
-		}
-		if hw.Detected && hw.TotalRAMMB/2 < mb {
-			mb = hw.TotalRAMMB / 2
-		}
-		if mb < 512 {
-			return nil, fmt.Errorf("not enough total RAM for local inference")
-		}
-	}
-
 	binary := filepath.Join(s.RuntimeDir, tool)
 	all := append([]string{fmt.Sprintf("--as=%d", int64(mb)*1024*1024), "--", binary}, args...)
 	cmd := exec.CommandContext(ctx, limit, all...)
 	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+s.RuntimeDir)
 	return cmd, nil
 }
+func child(ctx context.Context, s Settings, tool string, args ...string) (*exec.Cmd, error) {
+	hw := specs.DetectHardware()
+	mb := 1536
+	if hw.Detected && hw.AvailableRAMMB < 1024 {
+		return nil, fmt.Errorf("not enough available RAM (%d MB); close programs to free at least 1024 MB", hw.AvailableRAMMB)
+	}
+	if hw.Detected && hw.TotalRAMMB/2 < mb {
+		mb = hw.TotalRAMMB / 2
+	}
+	if mb < 512 {
+		return nil, fmt.Errorf("not enough total RAM for local inference")
+	}
+	return childWithLimit(ctx, s, tool, mb, args...)
+}
+
 func common(s Settings) []string {
 	threads := runtime.NumCPU()
 	if threads > 2 {
@@ -441,17 +437,21 @@ func TrainNext(ctx context.Context, s *Settings, dir string, out io.Writer) erro
 	if s.Adapter != "" {
 		args = append(args, "--lora", s.Adapter)
 	}
-	cmd, err := child(ctx, *s, "llama-finetune-lora", args...)
+	budget, err := trainingBudgetFor(specs.DetectHardware(), *s)
+	if err != nil {
+		return err
+	}
+	cmd, err := childWithLimit(ctx, *s, "llama-finetune-lora", budget.addressMB, args...)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "  Low-memory training on %q (%s). This may be slow.\n", art.Title, art.Source)
-	fmt.Fprintf(out, "  Low-memory settings: context 64, batch 8; trainer address-space limit up to 1024 MiB.\n")
-	fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or trainer RSS exceeds %d MiB.\n", trainingReserveMB, trainingRSSLimitMB)
+	fmt.Fprintf(out, "  Low-memory settings: context 64, batch 8; trainer address-space limit %d MiB.\n", budget.addressMB)
+	fmt.Fprintf(out, "  Training stops if available RAM falls below %d MiB or trainer RSS exceeds %d MiB.\n", trainingReserveMB, budget.rssMB)
 	fmt.Fprintln(out, "  Sampling can miss spikes; previous weights remain safe if training stops.")
 	cmd.Stdout = out
 	cmd.Stderr = out
-	if err = runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond); err != nil {
+	if err = runTrainingGuarded(cmd, readTrainingMemory, 100*time.Millisecond, budget.rssMB); err != nil {
 		return fmt.Errorf("training stopped; previous adapter preserved: %w", err)
 	}
 	if err = ggufFile(next); err != nil {
