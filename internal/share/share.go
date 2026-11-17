@@ -16,6 +16,7 @@ import (
 
 	"github.com/Rmdir-Matrix/DevMatrix/internal/brain"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/config"
+	"github.com/Rmdir-Matrix/DevMatrix/internal/corpus"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/specs"
 	"github.com/Rmdir-Matrix/DevMatrix/internal/ui"
 )
@@ -24,13 +25,18 @@ const ShareFormatVersion = "matrix-share-v2"
 
 // ShareSummary holds human-readable metadata inside a .matrix portable file.
 type ShareSummary struct {
-	ExportedName   string   `json:"exported_name"`
-	Level          int      `json:"level"`
-	XP             int64    `json:"xp"`
-	ArticlesRead   int      `json:"articles_read"`
-	ActiveSynapses int      `json:"active_synapses"`
-	VocabSize      int      `json:"vocab_size"`
-	TopTopics      []string `json:"top_topics"`
+	ExportedName    string                `json:"exported_name"`
+	Level           int                   `json:"level"`
+	XP              int64                 `json:"xp"`
+	ArticlesRead    int                   `json:"articles_read"`
+	ActiveSynapses  int                   `json:"active_synapses"`
+	VocabSize       int                   `json:"vocab_size"`
+	TopTopics       []string              `json:"top_topics"`
+	License         string                `json:"license,omitempty"`
+	LicenseURL      string                `json:"license_url,omitempty"`
+	Sources         []corpus.SourceCredit `json:"sources,omitempty"`
+	SourcesComplete bool                  `json:"sources_complete"`
+	LicenseNotice   string                `json:"license_notice,omitempty"`
 }
 
 type shareEnvelope struct {
@@ -62,13 +68,18 @@ func ExportMatrix(b *brain.Brain, exportName string, outPath string) (string, in
 		Format:     ShareFormatVersion,
 		ExportedAt: time.Now().UTC().Format(time.RFC3339),
 		Summary: ShareSummary{
-			ExportedName:   chosenName,
-			Level:          b.Level,
-			XP:             b.XP,
-			ArticlesRead:   b.ArticlesRead,
-			ActiveSynapses: b.Net.ActiveSynapses(),
-			VocabSize:      b.Net.VocabSize(),
-			TopTopics:      b.TopTopics(5),
+			ExportedName:    chosenName,
+			Level:           b.Level,
+			XP:              b.XP,
+			ArticlesRead:    b.ArticlesRead,
+			ActiveSynapses:  b.Net.ActiveSynapses(),
+			VocabSize:       b.Net.VocabSize(),
+			TopTopics:       b.TopTopics(5),
+			License:         "CC BY-SA 4.0",
+			LicenseURL:      "https://creativecommons.org/licenses/by-sa/4.0/",
+			Sources:         b.SharingCredits(),
+			SourcesComplete: b.SourceHistoryComplete,
+			LicenseNotice:   "Exporter declares CC BY-SA 4.0 for rights they control; source permissions, provenance and private material must be reviewed before sharing.",
 		},
 		SHA256Checksum: hex.EncodeToString(sum[:]),
 		BrainPayload:   rawBrain,
@@ -225,6 +236,10 @@ func RunInteractiveMenu(
 			fmt.Fprintf(out, "  %s Exported %q (Lv.%d) → %s (%.1f KB)\n",
 				theme.BoldGreen("✓"), config.SanitizeMatrixName(exportName), b.Level, savedPath, float64(sz)/1024.0)
 			fmt.Fprintln(out, "  "+theme.Dim("Share this single .matrix file with anyone running Matrix so they can import it!"))
+			fmt.Fprintln(out, "  Export declares CC BY-SA 4.0. Review source rights and private replay data before sharing.")
+			if !b.SourceHistoryComplete {
+				fmt.Fprintln(out, "  Warning: earlier source history may be incomplete.")
+			}
 
 		case "2", "import":
 			printLocalMatrixFilesHint(out, theme)

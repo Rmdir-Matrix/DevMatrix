@@ -50,28 +50,30 @@ type TrainReport struct {
 // Brain holds Matrix's Closed-Book Multi-Layer, Multi-Head GPT Transformer and training telemetry.
 // ZERO text/definition/passage lookup databases exist inside Brain — 100% of knowledge lives in Net weights!
 type Brain struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`
-	CreatedAt      string           `json:"created_at"`
-	UpdatedAt      string           `json:"updated_at"`
-	Level          int              `json:"level"`
-	XP             int64            `json:"xp"`
-	ArticlesRead   int              `json:"articles_read"`
-	TokensTrained  int64            `json:"tokens_trained"`
-	SmoothedLoss   float64          `json:"smoothed_loss"`
-	MaxReplay      int              `json:"max_replay"`
-	BatchSize      int              `json:"batch_size"`
-	WorkerThreads  int              `json:"worker_threads"`
-	TopicCounts    map[string]int   `json:"topic_counts"`
-	SeenSources    map[string]bool  `json:"seen_sources"`
-	RecentTitles   []string         `json:"recent_titles"`
-	CoreReplay     []TrainingSample `json:"core_replay,omitempty"`   // training-only SGD replay (never used at inference)
-	RecentReplay   []TrainingSample `json:"recent_replay,omitempty"` // training-only SGD replay (never used at inference)
-	TrainingItems  int              `json:"training_items,omitempty"`
-	GrowthEvents   int              `json:"growth_events,omitempty"`
-	GrowthMaxWidth int              `json:"-"`
-	GrowthRAMMB    int              `json:"-"`
-	Net            *NeuralNet       `json:"-"`
+	ID                    string                `json:"id"`
+	Name                  string                `json:"name"`
+	CreatedAt             string                `json:"created_at"`
+	UpdatedAt             string                `json:"updated_at"`
+	Level                 int                   `json:"level"`
+	XP                    int64                 `json:"xp"`
+	ArticlesRead          int                   `json:"articles_read"`
+	TokensTrained         int64                 `json:"tokens_trained"`
+	SmoothedLoss          float64               `json:"smoothed_loss"`
+	MaxReplay             int                   `json:"max_replay"`
+	BatchSize             int                   `json:"batch_size"`
+	WorkerThreads         int                   `json:"worker_threads"`
+	TopicCounts           map[string]int        `json:"topic_counts"`
+	SeenSources           map[string]bool       `json:"seen_sources"`
+	SourceCredits         []corpus.SourceCredit `json:"source_credits,omitempty"`
+	SourceHistoryComplete bool                  `json:"source_history_complete"`
+	RecentTitles          []string              `json:"recent_titles"`
+	CoreReplay            []TrainingSample      `json:"core_replay,omitempty"`   // training-only SGD replay (never used at inference)
+	RecentReplay          []TrainingSample      `json:"recent_replay,omitempty"` // training-only SGD replay (never used at inference)
+	TrainingItems         int                   `json:"training_items,omitempty"`
+	GrowthEvents          int                   `json:"growth_events,omitempty"`
+	GrowthMaxWidth        int                   `json:"-"`
+	GrowthRAMMB           int                   `json:"-"`
+	Net                   *NeuralNet            `json:"-"`
 }
 
 // NewBrain initializes a brand-new Level 1 Closed-Book GPT Matrix sized to ComputeProfile.
@@ -104,21 +106,22 @@ func NewBrain(name string, prof specs.ComputeProfile) *Brain {
 	}
 
 	return &Brain{
-		ID:             randomHexID(4),
-		Name:           strings.TrimSpace(name),
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		Level:          1,
-		XP:             0,
-		SmoothedLoss:   0,
-		MaxReplay:      maxRep,
-		BatchSize:      batchSz,
-		WorkerThreads:  workers,
-		GrowthMaxWidth: prof.HiddenNeurons * 4,
-		GrowthRAMMB:    prof.RAMBudgetMB,
-		TopicCounts:    make(map[string]int),
-		SeenSources:    make(map[string]bool),
-		Net:            NewNeuralNet(layers, heads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, seed),
+		ID:                    randomHexID(4),
+		Name:                  strings.TrimSpace(name),
+		CreatedAt:             now,
+		UpdatedAt:             now,
+		Level:                 1,
+		XP:                    0,
+		SmoothedLoss:          0,
+		MaxReplay:             maxRep,
+		BatchSize:             batchSz,
+		WorkerThreads:         workers,
+		GrowthMaxWidth:        prof.HiddenNeurons * 4,
+		GrowthRAMMB:           prof.RAMBudgetMB,
+		TopicCounts:           make(map[string]int),
+		SeenSources:           make(map[string]bool),
+		SourceHistoryComplete: true,
+		Net:                   NewNeuralNet(layers, heads, prof.EmbedDim, prof.HiddenNeurons, prof.MaxVocab, seed),
 	}
 }
 
@@ -369,6 +372,7 @@ func (b *Brain) TrainOnArticle(art corpus.Article, epochs int) TrainReport {
 		b.SmoothedLoss = 0.80*b.SmoothedLoss + 0.20*avgLoss
 	}
 
+	b.RecordSourceCredits(corpus.CreditsForArticle(art))
 	b.ArticlesRead++
 	b.TokensTrained += int64(rawTokensRead)
 	if art.Topic != "" && !isCurriculum && !isDict {

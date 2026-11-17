@@ -1,35 +1,25 @@
-# Matrix — Pretrained Study Buddy (Linux x86-64)
-
-Matrix recommends **SmolLM2 135M Instruct Q4_1**, a compact pretrained model designed primarily for English. It may still recognize or produce some other languages; English-only behavior is not guaranteed. Its answers can be inaccurate and are much weaker than large AI models. Matrix uses a CPU-only QVAC llama.cpp runtime and stores the frozen base model plus trained LoRA adapter on your chosen SSD. The model and runtime are separate files; `matrix` remains the main app. Linux x86-64 is the supported target for this new mode.
-
-## Getting started
-
-```bash
-chmod +x ./matrix
-./matrix
-# Optional: keep configuration and study notes on your SSD too
-./matrix --data-dir /path/to/ssd/matrix_data
-```
-
-Setup asks for a name and an SSD folder, shows the detected specs, and offers the recommended model (~98 MB download) and ~36 MB CPU runtime after you accept the Apache 2.0 license. Downloads are SHA-256 checked. Alternatively, supply a compatible GGUF, select its chat format, and provide a directory containing QVAC `llama-cli` and `llama-finetune-lora`. `prlimit` (provided by `util-linux`) must be installed. `./matrix --specs` shows the recommendation; `./matrix --setup` lets you change models. Existing users should choose `[1]` in setup to download the recommended Q4_1 weights. Switching is opt-in: existing model files and adapters are preserved in per-model profiles, and restored when switching back to the same weights.
-
-Choose **Chat** to talk to the pretrained model without retrieval; **Train one item** runs a real CPU LoRA update and saves an adapter, leaving the base weights intact. Training follows the existing dictionary-first, grammar-second article curriculum. It can be slow and may fail if memory is tight or the runtime/model combination is incompatible; a failed run preserves the previous adapter and curriculum position. Each successful run updates adapter weights, not the frozen base weights. Fine-tuning can reduce quality or overfit; improvement is not guaranteed.
-
-With the exact recommended Q4_1 model, Matrix monitors its own and the model process's combined RSS in both chat and training, stopping the child if a sampled total exceeds 448 MiB (about 470 MB). RSS can count shared pages twice; polling can miss spikes and excludes the OS, other processes and some cache, so this is **not a hard 500 MB limit**. Training needs at least 1088 MiB available at the start: 320 MiB for the monitored processes plus a 768 MiB system reserve. This is available system memory, not an estimate that Matrix will use 1088 MiB. The trainer has a separate virtual-address limit of up to 1024 MiB; virtual address space is not physical RAM. Other/custom models do not have this small-model RSS target and retain the 1408 MiB available-RAM minimum. GPU acceleration is disabled. Training can stop if the budget is exceeded, preserving the previous adapter; close other programs and retry. The exact model weights and real CPU LoRA training have been exercised locally; the default downloads and actual use on your machine still depend on your setup.
-
-The new pretrained mode does **not** yet support `.matrix` sharing, the old `/study`/`/define` commands, or parameter growth. Existing brains and `.matrix` files are untouched; use `./matrix --legacy` for the previous app and its sharing tools. Old scratch-trained brains cannot be converted into Gemma weights.
-
----
-
-## Legacy mode documentation
-
-The sections below describe the previous app, available with `--legacy`, not the default pretrained mode.
+# Matrix — On-Device AI Study Buddy CLI
 
 **Matrix** is a standalone, single-executable CLI AI study buddy written in pure Go (`CGO_ENABLED=0`). Matrix uses an experimental small **100% Closed-Book Multi-Layer, Multi-Head Decoder-Only GPT Transformer** (`Pre-RMSNorm` + `Multi-Head Causal Self-Attention` + `SiLU Feed-Forward MLP` + `Exact Full-Vocabulary Weight-Tied Softmax`). Zero text databases, zero passage lookup tables, and zero RAG retrieval are used at chat time — model-generated chat text comes from trained Transformer `float32` weights; uncertainty messages and CLI tools are application text. It is not comparable in capability to ChatGPT.
 
 ---
 
-## Quick Start (Single `.exe` Output)
+## Quick Start
+
+On Linux x86-64:
+
+```bash
+chmod +x ./matrix
+./matrix
+# Optional: choose a folder on an SSD for saves and notes
+./matrix --data-dir /path/to/ssd/matrix_data
+```
+
+Matrix now uses the original scratch-trained model and menu again: no pretrained model or external model runtime is needed. Existing scratch-trained Matrix saves are used as before. Pretrained model files and LoRA adapters are not deleted, but cannot be imported into the scratch model. A new scratch model begins untrained and will have limited capabilities. The RAM target is soft, not a hard whole-system limit.
+
+See [third-party notices](cmd/matrix/THIRD_PARTY_NOTICES.md) (or run `./matrix --licenses`) for dictionary and web-source license information. Exports declare CC BY-SA 4.0 and include recorded source names, license labels and page links. The declaration applies only to rights the exporter controls: local notes, imported saves, earlier mixed dictionary batches, and embedded materials can have unknown rights. Old or truncated histories are flagged incomplete. Replay samples can include private material. Review the actual sources and rights before sharing; this is not a guarantee that licensing trained weights complies with every source. For contact or removal requests, use [GitHub Issues](https://github.com/Rmdir-Matrix/DevMatrix/issues).
+
+### Windows
 
 Run the standalone Windows executable directly:
 
@@ -66,7 +56,7 @@ Your chosen budget sets a Go runtime **soft memory target** (`debug.SetMemoryLim
 
 ### 3. Mode 1 — Dictionaries First → Grammar → Multi-Source Real Articles
 Press **`Enter`** (or **`1`**) from the Main Menu to turn Matrix ON:
-- **Phase 1 — English Lexicon & Live Web Dictionaries (`[DICT]`)**: Trains first on **8 core chapters (640 foundational words)** from the embedded **4,800-word English lexicon** (`lexicon.json.gz`), enriched with live web definitions from `dictionaryapi.dev` and Wiktionary.
+- **Phase 1 — English Lexicon & Live Web Dictionaries (`[DICT]`)**: Trains first on **8 core chapters (640 foundational words)** from the embedded **4,800-word English lexicon** (`lexicon.json.gz`), enriched with live web definitions from Wiktionary.
 - **Phase 2 — Foundational Grammar (`8 sequential chapters`, `[GRAMMAR]`)**: Trains on English syntax, pronouns, tenses, adjectives/adverbs, question formation, conjunctions, and natural dialogue.
 - **Phase 3 — Multi-Source Articles & Extended Lexicon (`[NOTES]`, `[WEB]`, `[DICT]`, `[ARTICLE]`)**: Reads personal `.txt`/`.md` notes in `./matrix_data/study_notes/`, full **Wikipedia** articles (up to 14k chars), **Wikibooks** chapters, **arXiv** research abstracts, the remaining **4,160 extended lexicon words**, and the built-in 23-article study encyclopedia.
 - **Physical growth**: After every eight successfully trained items, the dense transformer can add FFN neurons, subject to a conservative estimated-memory check and a profile-dependent width ceiling. New output weights start at zero so growth initially preserves predictions; further training learns them. `/brain` reports parameter counts and `/grow` retries an earned milestone. More parameters do not guarantee better answers. This is an experimental small model, not ChatGPT.

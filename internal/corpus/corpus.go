@@ -36,10 +36,11 @@ const (
 
 // Article represents a dictionary chapter, grammar lesson, research abstract, or article.
 type Article struct {
-	Title   string `json:"title"`
-	Topic   string `json:"topic"`
-	Source  string `json:"source"`
-	Content string `json:"content"`
+	Title   string         `json:"title"`
+	Topic   string         `json:"topic"`
+	Source  string         `json:"source"`
+	Content string         `json:"content"`
+	Credits []SourceCredit `json:"credits,omitempty"`
 }
 
 type lexiconEntry struct {
@@ -315,7 +316,7 @@ func (r *Reader) NextArticle(ctx context.Context, topicFilter string, seenSource
 	return r.seedArticles[r.rng.Intn(len(r.seedArticles))], nil
 }
 
-// FetchDictionaryEntry looks up a word across live Free Dictionary API, Wiktionary REST API,
+// FetchDictionaryEntry looks up a word across the Wiktionary REST API,
 // and the embedded 4,800-word lexicon.
 func (r *Reader) FetchDictionaryEntry(ctx context.Context, word string) (Article, error) {
 	cleanWord := strings.ToLower(strings.TrimSpace(word))
@@ -324,9 +325,6 @@ func (r *Reader) FetchDictionaryEntry(ctx context.Context, word string) (Article
 	}
 
 	if r.canFetchLive() {
-		if art, err := r.fetchLiveDictionaryAPI(ctx, cleanWord); err == nil {
-			return art, nil
-		}
 		if art, err := r.fetchWiktionaryAPI(ctx, cleanWord); err == nil {
 			return art, nil
 		}
@@ -356,15 +354,14 @@ func (r *Reader) fetchLiveDictionaryBatch(ctx context.Context, batchKey string) 
 	probeWords := []string{"inference", "cognition", "synthesis", "theorem", "empirical", "entropy", "algorithm", "plasticity"}
 	start := r.rng.Intn(len(probeWords))
 	var sb strings.Builder
+	var credits []SourceCredit
 	fetched := 0
 
 	for i := 0; i < 3; i++ {
 		w := probeWords[(start+i)%len(probeWords)]
-		art, err := r.fetchLiveDictionaryAPI(ctx, w)
-		if err != nil {
-			art, err = r.fetchWiktionaryAPI(ctx, w)
-		}
+		art, err := r.fetchWiktionaryAPI(ctx, w)
 		if err == nil {
+			credits = append(credits, CreditsForArticle(art)...)
 			sb.WriteString(art.Content)
 			if !strings.HasSuffix(art.Content, "\n") {
 				sb.WriteByte('\n')
@@ -381,79 +378,7 @@ func (r *Reader) fetchLiveDictionaryBatch(ctx context.Context, batchKey string) 
 		Topic:   "English Dictionary",
 		Source:  batchKey,
 		Content: sb.String(),
-	}, nil
-}
-
-func (r *Reader) fetchLiveDictionaryAPI(ctx context.Context, word string) (Article, error) {
-	endpoint := "https://api.dictionaryapi.dev/api/v2/entries/en/" + url.PathEscape(word)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return Article{}, err
-	}
-	req.Header.Set("User-Agent", userAgentHeader)
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return Article{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Article{}, fmt.Errorf("dictionary api status %d", resp.StatusCode)
-	}
-
-	var entries []struct {
-		Word     string `json:"word"`
-		Meanings []struct {
-			PartOfSpeech string `json:"partOfSpeech"`
-			Definitions  []struct {
-				Definition string `json:"definition"`
-				Example    string `json:"example"`
-			} `json:"definitions"`
-		} `json:"meanings"`
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBytes))
-	if err != nil {
-		return Article{}, err
-	}
-	if err := json.Unmarshal(body, &entries); err != nil || len(entries) == 0 {
-		return Article{}, fmt.Errorf("decode dictionary entry failed")
-	}
-
-	var b strings.Builder
-	count := 0
-	for _, m := range entries[0].Meanings {
-		pos := strings.TrimSpace(m.PartOfSpeech)
-		if pos == "" {
-			pos = "word"
-		}
-		for _, d := range m.Definitions {
-			def := strings.TrimSpace(d.Definition)
-			if def == "" {
-				continue
-			}
-			ex := strings.TrimSpace(d.Example)
-			if ex != "" {
-				fmt.Fprintf(&b, "DICT: %s | %s | %s | %s\n", word, pos, def, ex)
-			} else {
-				fmt.Fprintf(&b, "DICT: %s | %s | %s\n", word, pos, def)
-			}
-			count++
-			if count >= 4 {
-				break
-			}
-		}
-		if count >= 4 {
-			break
-		}
-	}
-	if count == 0 {
-		return Article{}, fmt.Errorf("empty meanings")
-	}
-	return Article{
-		Title:   "Live Dictionary: " + entries[0].Word,
-		Topic:   "English Dictionary",
-		Source:  "dictionary:live:" + word,
-		Content: b.String(),
+		Credits: credits,
 	}, nil
 }
 

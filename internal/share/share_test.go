@@ -54,3 +54,34 @@ func TestExportAndImportMatrixWithCustomNameAndLowRAMPruning(t *testing.T) {
 		t.Fatalf("ListSavedBrains expected 1 brain, got %d (err=%v)", len(savedList), err)
 	}
 }
+
+func TestExportContainsLicenseAndSourceCard(t *testing.T) {
+	prof, _ := specs.BuildProfile(specs.HardwareInfo{TotalRAMMB: 4096, AvailableRAMMB: 2048, CPUCores: 2}, 256)
+	b := brain.NewBrain("Study", prof)
+	b.RecordSourceCredits(corpus.CreditsForArticle(corpus.Article{Source: "https://en.wikipedia.org/wiki/Computer"}))
+	b.RecordSourceCredits(corpus.CreditsForArticle(corpus.Article{Source: "http://arxiv.org/abs/1234.5678"}))
+	out := filepath.Join(t.TempDir(), "card.matrix")
+	path, _, err := ExportMatrix(b, "Study", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, summary, err := ImportMatrix(path, t.TempDir(), prof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.License != "CC BY-SA 4.0" || !summary.SourcesComplete || len(summary.Sources) != 2 || len(imported.SourceCredits) != 2 {
+		t.Fatalf("bad card: %+v", summary)
+	}
+	if summary.LicenseURL != "https://creativecommons.org/licenses/by-sa/4.0/" {
+		t.Fatal(summary.LicenseURL)
+	}
+	b.SourceHistoryComplete = false
+	path, _, err = ExportMatrix(b, "Old", filepath.Join(t.TempDir(), "old.matrix"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, summary, err = ImportMatrix(path, t.TempDir(), prof)
+	if err != nil || summary.SourcesComplete {
+		t.Fatalf("legacy history incorrectly complete: %+v %v", summary, err)
+	}
+}

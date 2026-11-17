@@ -26,7 +26,7 @@ function synthetic() {
   ['<pad>','<unk>','<bos>','<eos>','<user>','<assistant>','<self>','hello','world'].forEach((word,i)=>{let t=Buffer.from(word);u16(t.length);raw(t);u32(i)});
   for(let i=0;i<12+30*2;i++)u32(0);
   const payload=Buffer.concat(parts);
-  const env={format:'matrix-share-v2',summary:{exported_name:'Test Matrix'},sha256_checksum:crypto.createHash('sha256').update(payload).digest('hex'),brain_payload:payload.toString('base64')};
+  const env={format:'matrix-share-v2',summary:{exported_name:'Test Matrix',license:'CC BY-SA 4.0',license_url:'https://creativecommons.org/licenses/by-sa/4.0/',sources_complete:true,sources:[{name:'Wikipedia',license:'CC BY-SA 4.0',url:'https://en.wikipedia.org/wiki/Computer'}]},sha256_checksum:crypto.createHash('sha256').update(payload).digest('hex'),brain_payload:payload.toString('base64')};
   return {payload,env};
 }
 const gzip=env=>zlib.gzipSync(JSON.stringify(env));
@@ -37,6 +37,11 @@ const gzip=env=>zlib.gzipSync(JSON.stringify(env));
   assert.equal(result.brain.vocab[7].word,'hello');
   assert.equal(result.brain.tensors.length,72);
   assert.match(context.makeSections(result,'demo.matrix').samples,/hello world/);
+  assert.match(context.makeSections(result,'demo.matrix').overview,/Declared license: CC BY-SA 4.0/);
+  assert.match(context.makeSections(result,'demo.matrix').overview,/Wikipedia.*en.wikipedia.org/);
+  const oldCard=context.makeSections({...result,summary:{exported_name:'Old'}},'old.matrix').overview;
+  assert.match(oldCard,/Not recorded \(older export\)/);
+  assert.match(oldCard,/source history may be incomplete/);
   await context.openFile(makeFile(gzip(env)));
   assert.equal(elements.viewer.hidden,false);
   assert.match(elements.output.textContent,/MODEL ARCHITECTURE/);
